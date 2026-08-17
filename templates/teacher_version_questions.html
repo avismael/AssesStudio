@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ exam['title'] }} · {{ t('Version') }} {{ version['name'] }}{% endblock %}
+{% block body %}
+<main class="teacher-shell">
+  <div class="teacher-shell-grid">
+{% set active_page = "exams" %}{% include "_teacher_nav.html" %}
+  <div class="teacher-workspace">
+<header class="teacher-header"><div><p class="eyebrow"><a class="icon-label" href="{{ url_for('teacher_exam_detail', exam_id=exam['id']) }}">{{ icon('arrow-left') }}{{ t('Back to exams') }}</a></p><h1>{{ exam['title'] }} · {{ t('Version') }} {{ version['name'] }}</h1><p>{{ t('Select questions from the bank') }} · {{ exam['subject_name'] }}</p></div></header>
+<form class="filter-card universal-filter" method="get"><label class="filter-search"><span>{{ t('Search') }}</span><input type="search" name="q" value="{{ filters.q }}"></label><label><span>{{ t('Category') }}</span><select name="category"><option value="">{{ t('All categories') }}</option>{% for c in categories %}<option value="{{ c['id'] }}" {{ 'selected' if filters.category==c['id']|string else '' }}>{{ c['name'] }}</option>{% endfor %}</select></label><label><span>{{ t('Type') }}</span><select name="type"><option value="">{{ t('All types') }}</option>{% for key,label in type_labels.items() %}<option value="{{ key }}" {{ 'selected' if filters.type==key else '' }}>{{ label }}</option>{% endfor %}</select></label><button class="ghost-btn">{{ icon('funnel') }}{{ t('Filter') }}</button></form>
+<form method="post" action="{{ url_for('teacher_exam_version_questions_save', exam_id=exam['id'], version_id=version['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% set visible_ids = rows|map(attribute='id')|list %}{% for qid in selected_ids %}{% if qid not in visible_ids %}<input type="hidden" name="question_ids" value="{{ qid }}">{% endif %}{% endfor %}
+  <div class="version-selection-toolbar version-selection-toolbar-static">
+    <div class="selection-toolbar-left"><label><input type="checkbox" id="selectAllVersion"> {{ t('Select all') }}</label><span class="selection-count-inline"><strong id="versionSelectedCount">{{ selected_ids|length }}</strong> {{ t('Selected questions') }}</span></div>
+    <button class="primary-btn compact" type="submit">{{ icon('check-circle') }}{{ t('Save question selection') }}</button>
+  </div>
+  <section class="question-select-grid">{% for q in rows %}{% set missing_audio = q['id'] in unavailable_ids %}<label class="question-select-card {{ 'selected' if q['selected'] else '' }} {{ 'question-unavailable' if missing_audio else '' }}"><input class="version-question-check" type="checkbox" name="question_ids" value="{{ q['id'] }}" {{ 'checked' if q['selected'] else '' }} {{ 'disabled' if missing_audio else '' }}><div><div class="bank-tags"><span>{{ q['category_name'] }}</span><span>{{ type_labels[q['type']] }}</span>{% if missing_audio %}<span class="warning-tag">{{ t('Requires listening source') }}</span>{% endif %}</div><strong>{{ q['prompt'] }}</strong>{% if missing_audio %}<small class="question-unavailable-note">{{ t('Listening questions without an audio file or browser-voice script cannot be added to an exam until you complete one of those sources.') }}</small>{% endif %}</div></label>{% else %}<div class="empty-state">{{ icon('books-duotone') }}<p>{{ t('No questions found') }}</p></div>{% endfor %}</section>
+</form>
+  </div></div>
+</main>
+<script>const qs=[...document.querySelectorAll('.version-question-check:not(:disabled)')],all=document.getElementById('selectAllVersion'),count=document.getElementById('versionSelectedCount'),hiddenSelected=document.querySelectorAll('input[type="hidden"][name="question_ids"]').length;function syncQ(){const visibleN=qs.filter(x=>x.checked).length,totalN=hiddenSelected+visibleN;if(count)count.textContent=totalN;qs.forEach(x=>x.closest('.question-select-card')?.classList.toggle('selected',x.checked));if(all)all.checked=qs.length>0&&visibleN===qs.length}all?.addEventListener('change',()=>{qs.forEach(x=>x.checked=all.checked);syncQ()});qs.forEach(x=>x.addEventListener('change',syncQ));syncQ();</script>
+{% endblock %}

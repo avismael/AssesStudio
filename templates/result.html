@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ t('Your Result') }}{% endblock %}
+{% block body %}
+<main class="result-shell"><section class="result-card">
+  <div class="result-heading"><div><p class="eyebrow">{{ institution }}</p><h1>{{ t('Assessment complete') }}</h1><p>{{ attempt['assessment_subject'] or '' }}{% if session.get('teacher_authenticated') and attempt['exam_version_name'] %} · {{ t('Version') }} {{ attempt['exam_version_name'] }}{% endif %} · {{ attempt['student_name'] }} · {{ attempt['section'] }}</p></div><div class="grade-orb"><strong>{{ adjusted_grade }}</strong><span>/ 10 · {{ t('Adjusted final grade') }}</span></div></div>
+  <div class="score-strip score-strip-five"><div><span>{{ t('Correct answers') }}</span><strong>{{ attempt['score']|int }} / {{ attempt['total']|int }}</strong></div><div><span>{{ t('Percentage') }}</span><strong>{{ attempt['percentage'] }}%</strong></div><div><span>{{ t('Raw grade') }}</span><strong>{{ attempt['grade10'] }}/10</strong></div><div><span>{{ t('Penalty points') }}</span><strong>-{{ penalty_total }}</strong></div><div><span>{{ t('Submitted') }}</span><strong>{{ attempt['submitted_at'][0:10] }}</strong></div></div>
+  <div class="result-grid">
+    <section><h2>{{ t('Performance by category') }}</h2>{% for category, data in category_scores.items() %}{% set pct = (data.earned / data.total * 100) if data.total else 0 %}<div class="metric-row"><div><strong>{{ category_labels.get(category, t('Category') ~ ' ' ~ category) }}</strong><span>{{ data.earned|int }} / {{ data.total|int }}</span></div><div class="metric-bar"><i style="width: {{ pct }}%"></i></div></div>{% endfor %}</section>
+    <section><h2>{{ t('Performance by question type') }}</h2>{% for type_key, data in type_scores.items() %}{% if data.total %}{% set pct = (data.earned / data.total * 100) if data.total else 0 %}<div class="metric-row"><div><strong>{{ type_labels.get(type_key, type_key) }}</strong><span>{{ data.earned|int }} / {{ data.total|int }}</span></div><div class="metric-bar"><i style="width: {{ pct }}%"></i></div></div>{% endif %}{% endfor %}</section>
+  </div>
+  <section class="integrity-summary"><div><p class="eyebrow">{{ t('Exam integrity') }}</p><h2>{{ t(integrity_status) }}</h2><p>{{ t('These are technical indicators for teacher review; they do not automatically prove misconduct.') }}</p></div><div class="integrity-metrics"><span><strong>{{ focus_changes }}</strong>{{ t('Estimated window/app changes') }}</span><span><strong>{{ '%.1f'|format(attempt['away_seconds'] or 0) }} s</strong>{{ t('Detected time away') }}</span><span><strong>{{ blocked_actions }}</strong>{{ t('Blocked actions') }}</span></div></section>
+  <section class="penalty-summary"><div><p class="eyebrow">{{ t('Manual grade penalties') }}</p><h2>{{ t('Penalty points') }}: {{ penalty_total }}</h2><p>{{ t('This deduction was applied manually after teacher review. Integrity events never deduct points automatically.') }}</p></div>{% if penalties %}<div class="penalty-list">{% for penalty in penalties %}<article class="penalty-row {{ 'revoked' if not penalty['is_active'] else '' }}"><div><strong>-{{ penalty['points'] }} · {{ penalty['reason'] }}</strong><small>{{ penalty['created_at'].replace('T', ' ') }} · {{ penalty['teacher_name'] }} · {{ t('Penalty active') if penalty['is_active'] else t('Revoked') }}</small></div>{% if session.get('teacher_authenticated') and penalty['is_active'] %}<form method="post" action="{{ url_for('revoke_attempt_penalty', attempt_id=attempt['id'], penalty_id=penalty['id']) }}" data-confirm data-confirm-title="{{ t('Revoke this penalty?') }}" data-confirm-text="{{ t('The raw academic score will remain unchanged.') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="ghost-btn compact" type="submit">{{ t('Revoke penalty') }}</button></form>{% endif %}</article>{% endfor %}</div>{% else %}<p>{{ t('No penalties have been applied.') }}</p>{% endif %}</section>
+  {% if session.get('teacher_authenticated') %}
+  <section class="integrity-review-panel" data-integrity-review>
+    <header class="integrity-review-heading">
+      <div><p class="eyebrow">{{ t('Exam integrity') }}</p><h2>{{ t('Integrity event review') }}</h2><p>{{ t('Review the recorded browser signals in context before making a decision.') }}</p></div>
+      <p class="integrity-evidence-note">{{ t('Telemetry supports teacher judgment; it is not proof of misconduct by itself.') }}</p>
+    </header>
+    <div class="integrity-review-stats" aria-label="{{ t('Exam integrity summary') }}">
+      <div><strong>{{ integrity_review.summary.away_periods }}</strong><span>{{ t('Away periods') }}</span></div>
+      <div><strong>{{ integrity_review.summary.total_away_time }}</strong><span>{{ t('Total away time') }}</span></div>
+      <div><strong>{{ integrity_review.summary.blocked_actions }}</strong><span>{{ t('Blocked actions') }}</span></div>
+      <div><strong>{{ integrity_review.summary.fullscreen_exits }}</strong><span>{{ t('Fullscreen exits') }}</span></div>
+    </div>
+    <div class="integrity-timeline">
+      {% for event in integrity_review['items'] %}
+      <article class="integrity-event-card tone-{{ event.tone }}">
+        <div class="integrity-event-icon">{{ icon(event.icon) }}</div>
+        <div class="integrity-event-content">
+          <div class="integrity-event-title"><h3>{{ event.title }}</h3><time>{{ event.occurred_at }}</time></div>
+          <p>{{ event.explanation }}</p>
+          <div class="integrity-event-context">
+            <span class="integrity-question-chip"><strong>{{ event.question_label }}</strong>{% if event.question_excerpt %}<small>{{ event.question_excerpt }}</small>{% endif %}</span>
+            {% if event.duration %}<span class="integrity-data-chip">{{ event.duration }}</span>{% endif %}
+            {% if event.shortcut %}<span class="integrity-data-chip"><kbd>{{ event.shortcut }}</kbd></span>{% endif %}
+          </div>
+          <details class="integrity-technical"><summary>{{ t('Technical details') }}</summary><div><code>event_type: {{ event.raw_type }}</code><pre>{{ event.technical_details }}</pre></div></details>
+        </div>
+      </article>
+      {% else %}
+      <p class="integrity-empty">{{ t('No integrity events were recorded.') }}</p>
+      {% endfor %}
+    </div>
+  </section>
+  <section class="teacher-review-panel"><div><p class="eyebrow">{{ t('Manual grade penalties') }}</p><h2>{{ t('Apply penalty') }}</h2></div><form class="penalty-form" method="post" action="{{ url_for('add_attempt_penalty', attempt_id=attempt['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label><span>{{ t('Penalty points') }}</span><input type="number" name="points" min="0.01" max="{{ adjusted_grade }}" step="0.01" required></label><label><span>{{ t('Penalty reason') }}</span><input type="text" name="reason" maxlength="500" required></label><button class="primary-btn" type="submit">{{ t('Apply penalty') }}</button></form></section>
+  {% endif %}
+  <div class="report-note">{{ t('Your report contains the score summary only; it does not reveal the answer key.') }}</div>
+  <div class="result-actions"><a class="primary-btn" href="{{ url_for('report_pdf', attempt_id=attempt['id']) }}">{{ icon('download-simple') }}{{ t('Download report PDF') }}</a><button class="ghost-btn" onclick="window.print()">{{ t('Print result') }}</button>{% if session.get('teacher_authenticated') %}<a class="ghost-btn" href="{{ url_for('teacher') }}">{{ icon('arrow-left') }}{{ t('Back to results') }}</a>{% elif session.get('student_authenticated') %}<a class="ghost-btn" href="{{ url_for('student_dashboard') }}">{{ icon('arrow-left') }}{{ t('Back to exams') }}</a><a class="ghost-btn" href="{{ url_for('student_change_password') }}">{{ icon('key') }}{{ t('Change password') }}</a><form method="post" action="{{ url_for('student_logout') }}" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="ghost-btn" type="submit">{{ icon('sign-out') }}{{ t('Sign out') }}</button></form>{% endif %}</div>
+</section></main>
+{% endblock %}

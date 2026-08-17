@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ t('Assessments') }}{% endblock %}
+{% block body %}
+<main class="teacher-shell">
+  <div class="teacher-shell-grid">
+{% set active_page = "exams" %}{% include "_teacher_nav.html" %}
+  <div class="teacher-workspace">
+<header class="teacher-header"><div><p class="eyebrow">{{ t('Exam manager') }}</p><h1>{{ t('Assessments') }}</h1><p>{{ t('Create exams by subject, build multiple versions, and assign them to sections.') }}</p></div><div class="teacher-actions"><button class="primary-btn compact" type="button" data-open-modal="createExamModal">{{ icon('plus') }}{{ t('Create exam') }}</button></div></header>
+<section class="exam-manager-grid">
+{% for e in rows %}<article class="exam-manager-card"><div class="exam-manager-top"><div><span class="subject-chip">{{ e['subject_name'] }}</span><span class="status-pill {{ 'live' if e['is_published'] else 'draft' }}">{{ t('Published') if e['is_published'] else t('Draft') }}</span></div><span class="exam-card-count">{{ e['result_count'] }} {{ t('Results')|lower }}</span></div><h2>{{ e['title'] }}</h2><p>{{ e['description'] or '' }}</p><div class="exam-manager-stats"><span><strong>{{ e['version_count'] }}</strong>{{ t('Versions') }}</span><span><strong>{{ e['assignment_count'] }}</strong>{{ t('Assigned sections') }}</span><span><strong>{{ e['result_count'] }}</strong>{{ t('Submitted') }}</span></div><a class="primary-btn" href="{{ url_for('teacher_exam_detail', exam_id=e['id']) }}">{{ t('Manage exam') }}{{ icon('arrow-right') }}</a></article>
+{% else %}<div class="empty-state">{{ icon('file-text') }}<h2>{{ t('No exams available') }}</h2><p>{{ t('Create your first exam and then build one or more versions from the question bank.') }}</p></div>{% endfor %}
+</section>
+<dialog class="app-modal" id="createExamModal"><form class="modal-form" method="post" action="{{ url_for('teacher_exam_new') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><header class="modal-header"><div><p class="eyebrow">{{ t('Assessments') }}</p><h2>{{ t('Create exam') }}</h2></div><button type="button" class="modal-close icon-only" data-close-modal aria-label="{{ t('Close') }}">{{ icon('x') }}</button></header><div class="modal-body"><label class="modal-field"><span>{{ t('Subject') }}</span><select name="subject_id" required>{% for s in subjects %}<option value="{{ s['id'] }}">{{ s['name'] }}</option>{% endfor %}</select></label><label class="modal-field"><span>{{ t('Exam title') }}</span><input name="title" required maxlength="160"></label><label class="modal-field"><span>{{ t('Exam description') }}</span><textarea name="description" rows="4" maxlength="500"></textarea></label></div><footer class="modal-actions"><button type="button" class="ghost-btn" data-close-modal>{{ t('Cancel') }}</button><button class="primary-btn" type="submit">{{ icon('plus') }}{{ t('Create exam') }}</button></footer></form></dialog>
+  </div>
+  </div>
+</main>
+{% endblock %}

@@ -1,0 +1,67 @@
+{% from "_icons.html" import icon %}
+<aside class="app-sidebar" data-teacher-sidebar aria-label="{{ t('Teacher dashboard') }}">
+  <div class="sidebar-brand-row">
+    <a class="sidebar-brand" href="{{ url_for('teacher') }}" aria-label="Assessment Studio">
+      <span class="sidebar-brand-mark" aria-hidden="true">AS</span>
+      <span class="sidebar-brand-copy"><strong>Assessment Studio</strong><small>{{ t('Teacher workspace') }}</small></span>
+    </a>
+    <button class="sidebar-collapse" type="button" data-sidebar-toggle aria-expanded="true" aria-controls="teacherSidebarSections" aria-label="{{ t('Collapse navigation') }}">
+      {{ icon('caret-left') }}
+    </button>
+  </div>
+
+  <div class="sidebar-scroll" id="teacherSidebarSections">
+    <nav class="sidebar-section" aria-label="{{ t('Operations') }}">
+      <p class="sidebar-label">{{ t('Operations') }}</p>
+      <a class="sidebar-link {{ 'is-active' if active_page == 'results' else '' }}" href="{{ url_for('teacher') }}" {% if active_page == 'results' %}aria-current="page"{% endif %}><span class="sidebar-icon">{{ icon('chart-bar') }}</span><span><strong>{{ t('Results') }}</strong><small>{{ t('Submissions and integrity') }}</small></span></a>
+      <a class="sidebar-link {{ 'is-active' if active_page == 'exams' else '' }}" href="{{ url_for('teacher_exams') }}" {% if active_page == 'exams' %}aria-current="page"{% endif %}><span class="sidebar-icon">{{ icon('file-text') }}</span><span><strong>{{ t('Exams') }}</strong><small>{{ t('Versions and assignments') }}</small></span></a>
+    </nav>
+    <nav class="sidebar-section" aria-label="{{ t('Content') }}">
+      <p class="sidebar-label">{{ t('Content') }}</p>
+      <a class="sidebar-link {{ 'is-active' if active_page == 'students' else '' }}" href="{{ url_for('teacher_students') }}" {% if active_page == 'students' %}aria-current="page"{% endif %}><span class="sidebar-icon">{{ icon('users-three') }}</span><span><strong>{{ t('Students') }}</strong><small>{{ t('Roster and sections') }}</small></span></a>
+      <a class="sidebar-link {{ 'is-active' if active_page == 'questions' else '' }}" href="{{ url_for('teacher_questions') }}" {% if active_page == 'questions' %}aria-current="page"{% endif %}><span class="sidebar-icon">{{ icon('question') }}</span><span><strong>{{ t('Question bank') }}</strong><small>{{ t('Reusable assessment items') }}</small></span></a>
+      <a class="sidebar-link {{ 'is-active' if active_page == 'catalog' else '' }}" href="{{ url_for('teacher_catalog') }}" {% if active_page == 'catalog' %}aria-current="page"{% endif %}><span class="sidebar-icon">{{ icon('folders') }}</span><span><strong>{{ t('Catalog') }}</strong><small>{{ t('Subjects and categories') }}</small></span></a>
+    </nav>
+    <nav class="sidebar-section" aria-label="{{ t('Administration') }}">
+      <p class="sidebar-label">{{ t('Administration') }}</p>
+      {% if current_teacher_user and current_teacher_user['role'] == 'admin' %}<a class="sidebar-link {{ 'is-active' if active_page == 'setup' else '' }}" href="{{ url_for('teacher_setup') }}" {% if active_page == 'setup' %}aria-current="page"{% endif %}><span class="sidebar-icon">{{ icon('gear-six') }}</span><span><strong>{{ t('Setup') }}</strong><small>{{ t('Institution and exam policy') }}</small></span></a>{% endif %}
+      {% if current_teacher_user and current_teacher_user['role'] == 'admin' %}<a class="sidebar-link {{ 'is-active' if active_page == 'teachers' else '' }}" href="{{ url_for('teacher_users') }}" {% if active_page == 'teachers' %}aria-current="page"{% endif %}><span class="sidebar-icon">{{ icon('chalkboard-teacher') }}</span><span><strong>{{ t('Teachers') }}</strong><small>{{ t('Accounts and access') }}</small></span></a>{% endif %}
+    </nav>
+  </div>
+
+  <div class="sidebar-footer">
+    <div class="sidebar-account">
+      <span class="sidebar-avatar" aria-hidden="true">{{ (current_teacher_user['full_name'][0] if current_teacher_user else 'T')|upper }}</span>
+      <span class="sidebar-account-copy"><strong>{{ current_teacher_user['full_name'] if current_teacher_user else session.get('teacher_name', 'Teacher') }}</strong><small>{{ t('Administrator') if current_teacher_user and current_teacher_user['role'] == 'admin' else t('Teacher') }}</small></span>
+      <a class="sidebar-account-link" href="{{ url_for('teacher_account_password') }}" aria-label="{{ t('Change password') }}">{{ icon('key') }}</a>
+    </div>
+    <form class="sidebar-logout" method="post" action="{{ url_for('teacher_logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">{{ icon('sign-out', 'ui-icon-sm') }}{{ t('Log out') }}</button></form>
+  </div>
+</aside>
+
+<header class="mobile-app-bar">
+  <a class="mobile-brand" href="{{ url_for('teacher') }}"><span aria-hidden="true">AS</span><strong>Assessment Studio</strong></a>
+  <span class="mobile-user">{{ current_teacher_user['full_name'] if current_teacher_user else session.get('teacher_name', 'Teacher') }}</span>
+</header>
+
+<nav class="mobile-bottom-nav" aria-label="{{ t('Teacher dashboard') }}">
+  <a class="{{ 'is-active' if active_page == 'results' else '' }}" href="{{ url_for('teacher') }}" {% if active_page == 'results' %}aria-current="page"{% endif %}>{{ icon('chart-bar') }}<small>{{ t('Results') }}</small></a>
+  <a class="{{ 'is-active' if active_page == 'exams' else '' }}" href="{{ url_for('teacher_exams') }}" {% if active_page == 'exams' %}aria-current="page"{% endif %}>{{ icon('file-text') }}<small>{{ t('Exams') }}</small></a>
+  <a class="{{ 'is-active' if active_page == 'students' else '' }}" href="{{ url_for('teacher_students') }}" {% if active_page == 'students' %}aria-current="page"{% endif %}>{{ icon('users-three') }}<small>{{ t('Students') }}</small></a>
+  <a class="{{ 'is-active' if active_page == 'questions' else '' }}" href="{{ url_for('teacher_questions') }}" {% if active_page == 'questions' %}aria-current="page"{% endif %}>{{ icon('question') }}<small>{{ t('Bank') }}</small></a>
+  <button class="{{ 'is-active' if active_page in ['catalog', 'setup', 'teachers'] else '' }}" type="button" data-more-open aria-controls="teacherMoreSheet" aria-expanded="false" {% if active_page in ['catalog', 'setup', 'teachers'] %}aria-current="page"{% endif %}>{{ icon('dots-three') }}<small>{{ t('More') }}</small></button>
+</nav>
+
+<div class="mobile-more-layer" data-more-layer hidden>
+  <button class="mobile-more-backdrop" type="button" data-more-close aria-label="{{ t('Close') }}"></button>
+  <aside class="mobile-more-sheet" id="teacherMoreSheet" role="dialog" aria-modal="true" aria-labelledby="teacherMoreTitle" tabindex="-1">
+    <header><div><p class="eyebrow">{{ t('Workspace') }}</p><h2 id="teacherMoreTitle">{{ t('More') }}</h2></div><button class="sheet-close icon-only" type="button" data-more-close aria-label="{{ t('Close') }}">{{ icon('x') }}</button></header>
+    <nav aria-label="{{ t('Secondary destinations') }}">
+      <a href="{{ url_for('teacher_catalog') }}" {% if active_page == 'catalog' %}aria-current="page"{% endif %}><span>{{ icon('folders') }}</span><span><strong>{{ t('Catalog') }}</strong><small>{{ t('Subjects and categories') }}</small></span></a>
+      {% if current_teacher_user and current_teacher_user['role'] == 'admin' %}<a href="{{ url_for('teacher_setup') }}" {% if active_page == 'setup' %}aria-current="page"{% endif %}><span>{{ icon('gear-six') }}</span><span><strong>{{ t('Setup') }}</strong><small>{{ t('Institution and exam policy') }}</small></span></a>{% endif %}
+      {% if current_teacher_user and current_teacher_user['role'] == 'admin' %}<a href="{{ url_for('teacher_users') }}" {% if active_page == 'teachers' %}aria-current="page"{% endif %}><span>{{ icon('chalkboard-teacher') }}</span><span><strong>{{ t('Teachers') }}</strong><small>{{ t('Accounts and access') }}</small></span></a>{% endif %}
+      <a href="{{ url_for('teacher_account_password') }}"><span>{{ icon('key') }}</span><span><strong>{{ t('Change password') }}</strong><small>{{ t('Account security') }}</small></span></a>
+    </nav>
+    <form class="sheet-logout" method="post" action="{{ url_for('teacher_logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="ghost-btn" type="submit">{{ icon('sign-out') }}{{ t('Log out') }}</button></form>
+  </aside>
+</div>

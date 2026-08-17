@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ t('Teacher access heading') }}{% endblock %}
+{% block body %}
+<main class="login-shell"><section class="login-card teacher-login-card">
+  <div class="brand-mark">AS</div><p class="eyebrow">{{ institution }}</p><h1>{{ t('Teacher access heading') }}</h1><p class="lead">{{ t('Open results, question banks, subjects, categories and assessment settings.') }}</p>
+  <form method="post" class="login-form" autocomplete="on">
+    <label><span>{{ t('Teacher email') }}</span><input type="email" name="email" autocomplete="username" required autofocus placeholder="docente@institucion.edu"></label>
+    <label><span>{{ t('Password') }}</span><input type="password" name="password" autocomplete="current-password" required placeholder="••••••••"></label>
+    <button class="primary-btn" type="submit">{{ t('Enter dashboard') }}{{ icon('arrow-right') }}</button>
+  </form>
+  <a class="teacher-link icon-label" href="{{ url_for('index') }}">{{ icon('arrow-left') }}{{ t('Back to assessment') }}</a>
+</section></main>
+{% endblock %}

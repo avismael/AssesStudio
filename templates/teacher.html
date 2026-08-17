@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ t('Teacher dashboard') }}{% endblock %}
+{% block body %}
+<main class="teacher-shell">
+  <div class="teacher-shell-grid">
+    {% set active_page = "results" %}{% include "_teacher_nav.html" %}
+    <div class="teacher-workspace">
+      <header class="teacher-header page-header">
+        <div><p class="eyebrow">{{ t('Teacher dashboard') }}</p><h1>{{ title }}</h1><p>{{ t('Monitor outcomes, review integrity signals, and move directly into assessment work.') }}</p></div>
+        <div class="teacher-actions"><a class="primary-btn compact" href="{{ url_for('teacher_exams') }}">{{ icon('file-text') }}{{ t('Manage exams') }}</a><a class="ghost-btn compact" href="{{ url_for('teacher_questions') }}">{{ icon('question') }}{{ t('Question bank') }}</a></div>
+      </header>
+
+      <section class="kpi-grid" aria-label="{{ t('Results overview') }}">
+        <article class="kpi-card kpi-card-featured" data-stat="submitted" data-value="{{ dashboard_stats.submitted }}">{{ icon('chart-bar-duotone', 'kpi-icon ui-icon-lg') }}<span>{{ t('Submitted results') }}</span><strong>{{ dashboard_stats.submitted }}</strong><small>{{ dashboard_stats.active_exams }} {{ t('published exams') }}</small></article>
+        <article class="kpi-card" data-stat="average-percentage" data-value="{{ '%.1f'|format(dashboard_stats.average_percentage) }}"><span>{{ t('Average percentage') }}</span><strong>{{ '%.1f'|format(dashboard_stats.average_percentage) }}%</strong><small>{{ '%.1f'|format(dashboard_stats.average_grade) }}/10 {{ t('average grade') }}</small></article>
+        <article class="kpi-card" data-stat="clean-rate" data-value="{{ '%.1f'|format(dashboard_stats.clean_rate) }}"><span>{{ t('Clean review rate') }}</span><strong>{{ '%.0f'|format(dashboard_stats.clean_rate) }}%</strong><small>{{ dashboard_stats.clean_count }} {{ t('no incidents') }}</small></article>
+        <article class="kpi-card" data-stat="review-count" data-value="{{ dashboard_stats.review_count }}"><span>{{ t('Needs review') }}</span><strong>{{ dashboard_stats.review_count }}</strong><small>{{ dashboard_stats.focus_total }} {{ t('focus changes') }}</small></article>
+      </section>
+
+      <section class="dashboard-bento">
+        <article class="bento-card bento-performance">
+          <div class="card-heading"><div><p class="eyebrow">{{ t('Performance distribution') }}</p><h2>{{ t('Submitted grade profile') }}</h2></div><span class="data-chip">{{ dashboard_stats.submitted }} {{ t('total') }}</span></div>
+          {% set distribution_total = dashboard_stats.submitted if dashboard_stats.submitted else 1 %}
+          <div class="distribution-list">
+            <div><span><strong>{{ t('Strong') }}</strong><small>80–100%</small></span><div class="meter"><i style="--meter-value:{{ dashboard_stats.band_strong / distribution_total * 100 }}%"></i></div><b>{{ dashboard_stats.band_strong }}</b></div>
+            <div><span><strong>{{ t('Developing') }}</strong><small>60–79%</small></span><div class="meter"><i style="--meter-value:{{ dashboard_stats.band_developing / distribution_total * 100 }}%"></i></div><b>{{ dashboard_stats.band_developing }}</b></div>
+            <div><span><strong>{{ t('Needs support') }}</strong><small>0–59%</small></span><div class="meter"><i class="meter-alert" style="--meter-value:{{ dashboard_stats.band_needs_support / distribution_total * 100 }}%"></i></div><b>{{ dashboard_stats.band_needs_support }}</b></div>
+          </div>
+        </article>
+
+        <article class="bento-card bento-integrity">
+          <div><p class="eyebrow">{{ t('Integrity') }}</p><h2>{{ t('Review queue') }}</h2><p>{{ t('Technical signals support review; they are not proof of misconduct.') }}</p></div>
+          <div class="integrity-number"><strong>{{ dashboard_stats.review_count }}</strong><span>{{ t('flagged submissions') }}</span></div>
+          <dl class="compact-data"><div><dt>{{ t('Focus changes') }}</dt><dd>{{ dashboard_stats.focus_total }}</dd></div><div><dt>{{ t('Blocked actions') }}</dt><dd>{{ dashboard_stats.blocked_total }}</dd></div></dl>
+        </article>
+
+        <article class="bento-card bento-resources">
+          <div class="card-heading"><div><p class="eyebrow">{{ t('Workspace') }}</p><h2>{{ t('Teaching resources') }}</h2></div></div>
+          <div class="resource-grid"><a href="{{ url_for('teacher_exams') }}">{{ icon('file-text') }}<strong>{{ dashboard_stats.active_exams }}</strong><span>{{ t('Active exams') }}</span></a><a href="{{ url_for('teacher_questions') }}">{{ icon('books') }}<strong>{{ dashboard_stats.question_bank }}</strong><span>{{ t('Questions') }}</span></a><a href="{{ url_for('teacher_students') }}">{{ icon('users-three') }}<strong>{{ dashboard_stats.roster }}</strong><span>{{ t('Students') }}</span></a><a href="{{ url_for('teacher_students') }}">{{ icon('folders') }}<strong>{{ dashboard_stats.sections }}</strong><span>{{ t('Sections') }}</span></a></div>
+        </article>
+
+        <article class="bento-card bento-export">
+          <div><p class="eyebrow">{{ t('Exports') }}</p><h2>{{ t('Take the current view with you') }}</h2><p>{{ t('CSV and Excel downloads follow the filters below.') }}</p></div>
+          <div class="button-row"><a class="primary-btn compact" href="{{ url_for('export_xlsx', q=filters.q, section=filters.section, subject=filters.subject, assessment=filters.assessment, version=filters.version, integrity=filters.integrity, date_from=filters.date_from, date_to=filters.date_to) }}">{{ icon('download-simple') }}{{ t('Excel') }}</a><a class="ghost-btn compact" href="{{ url_for('export_csv', q=filters.q, section=filters.section, subject=filters.subject, assessment=filters.assessment, version=filters.version, integrity=filters.integrity, date_from=filters.date_from, date_to=filters.date_to) }}">{{ icon('download-simple') }}{{ t('CSV') }}</a></div>
+        </article>
+      </section>
+
+      <section class="content-section result-filter-section">
+        <div class="section-title-row"><div><p class="eyebrow">{{ t('Results') }}</p><h2>{{ t('Submission explorer') }}</h2></div><span class="data-chip">{{ dashboard_stats.visible.submitted }} {{ t('shown') }} · {{ '%.1f'|format(dashboard_stats.visible.average_percentage) }}%</span></div>
+        <form class="filter-card result-filter-grid" method="get" action="{{ url_for('teacher') }}">
+          <label class="filter-search-wide"><span>{{ t('Search') }}</span><input type="search" name="q" value="{{ filters.q }}" placeholder="{{ t('Search student or email...') }}"></label>
+          <label><span>{{ t('Section') }}</span><select name="section"><option value="">{{ t('All sections') }}</option>{% for value in filter_options.sections %}<option value="{{ value }}" {{ 'selected' if filters.section == value else '' }}>{{ value }}</option>{% endfor %}</select></label>
+          <label><span>{{ t('Subject') }}</span><select name="subject"><option value="">{{ t('All subjects') }}</option>{% for value in filter_options.subjects %}<option value="{{ value }}" {{ 'selected' if filters.subject == value else '' }}>{{ value }}</option>{% endfor %}</select></label>
+          <label><span>{{ t('Assessment') }}</span><select name="assessment"><option value="">{{ t('All assessments') }}</option>{% for value in filter_options.assessments %}<option value="{{ value }}" {{ 'selected' if filters.assessment == value else '' }}>{{ value }}</option>{% endfor %}</select></label>
+          <label><span>{{ t('Version') }}</span><select name="version"><option value="">{{ t('All') }}</option>{% for value in filter_options.versions %}<option value="{{ value }}" {{ 'selected' if filters.version == value else '' }}>{{ value }}</option>{% endfor %}</select></label>
+          <label><span>{{ t('Integrity') }}</span><select name="integrity"><option value="">{{ t('All integrity states') }}</option><option value="clean" {{ 'selected' if filters.integrity == 'clean' else '' }}>{{ t('No incidents') }}</option><option value="review" {{ 'selected' if filters.integrity == 'review' else '' }}>{{ t('Review') }}</option></select></label>
+          <label><span>{{ t('From date') }}</span><input type="date" name="date_from" value="{{ filters.date_from }}"></label><label><span>{{ t('To date') }}</span><input type="date" name="date_to" value="{{ filters.date_to }}"></label>
+          <div class="filter-actions"><button class="primary-btn compact" type="submit">{{ icon('funnel') }}{{ t('Apply filters') }}</button><a class="ghost-btn compact" href="{{ url_for('teacher') }}">{{ t('Clear filters') }}</a></div>
+        </form>
+      </section>
+
+      <section class="table-card" aria-label="{{ t('Submitted results') }}">
+        {% if rows %}<div class="table-scroll"><table>
+          <thead><tr><th>{{ t('Student') }}</th><th>{{ t('Section') }}</th><th>{{ t('Submitted') }}</th><th>{{ t('Assessment') }}</th><th>{{ t('Version') }}</th><th>{{ t('Subject') }}</th><th>{{ t('Score') }}</th><th>%</th><th>{{ t('Raw grade') }}</th><th>{{ t('Penalty points') }}</th><th>{{ t('Adjusted final grade') }}</th><th>{{ t('Focus changes') }}</th><th>{{ t('Blocked actions') }}</th><th>{{ t('Integrity') }}</th><th>{{ t('Report') }}</th></tr></thead>
+          <tbody>{% for r in rows %}<tr><td><strong>{{ r['student_name'] }}</strong>{% if r['student_email'] %}<small class="cell-sub">{{ r['student_email'] }}</small>{% endif %}</td><td>{{ r['section'] }}</td><td>{{ r['submitted_at'].replace('T', ' ') }}</td><td><span class="cell-wrap">{{ r['assessment_title'] or t('Assessment') }}</span></td><td>{{ r['exam_version_name'] or '—' }}</td><td>{{ r['assessment_subject'] or '—' }}</td><td>{{ r['score']|int }} / {{ r['total']|int }}</td><td>{{ r['percentage'] }}%</td><td>{{ r['grade10'] }}</td><td>-{{ r['penalty_points'] }}</td><td><span class="grade-pill">{{ r['adjusted_grade10'] }}</span></td>{% set focus_changes = (r['focus_departures'] or 0) + (r['blur_events'] or 0) %}<td><strong>{{ focus_changes }}</strong><small class="cell-sub">{{ '%.1f'|format(r['away_seconds'] or 0) }} s</small></td>{% set blocked = (r['context_menu_attempts'] or 0) + (r['copy_attempts'] or 0) + (r['cut_attempts'] or 0) + (r['paste_attempts'] or 0) + (r['shortcut_attempts'] or 0) %}<td>{{ blocked }}</td><td><span class="integrity-pill {{ 'clean' if focus_changes == 0 and blocked == 0 and (r['fullscreen_exits'] or 0) == 0 else 'review' }}">{{ t('No incidents') if focus_changes == 0 and blocked == 0 and (r['fullscreen_exits'] or 0) == 0 else t('Review') }}</span></td><td><a href="{{ url_for('result', attempt_id=r['id']) }}">{{ t('View') }}</a></td></tr>{% endfor %}</tbody>
+        </table></div>{% else %}<div class="empty-state">{{ icon('chart-bar-duotone') }}<h2>{{ t('No submitted results yet.') }}</h2><p>{{ t('Student submissions will appear here automatically.') }}</p></div>{% endif %}
+      </section>
+    </div>
+  </div>
+</main>
+{% endblock %}

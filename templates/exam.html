@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ t('Assessment') }} · {{ attempt['student_name'] }}{% endblock %}
+{% block body %}
+<div class="app-shell secure-exam notranslate" translate="no">
+  <header class="topbar">
+    <div><p class="eyebrow">{{ t('Secure assessment') }} · {{ attempt['assessment_subject'] or '' }}</p><h1>{{ title }}</h1></div>
+    <div class="student-chip"><div class="avatar">{{ attempt['student_name'][0]|upper }}</div><div><strong>{{ attempt['student_name'] }}</strong><small>{{ attempt['section'] }}</small></div></div>
+  </header>
+  <div class="exam-layout">
+    <aside class="exam-sidebar exam-sidebar-minimal">
+      <div class="exam-progress-mini"><div class="exam-progress-top"><strong id="progressPercent">0%</strong><span><b id="answeredCount">0 / {{ total }}</b> {{ t('answered') }}</span></div><div class="progress-line" id="progressRing"><i></i></div></div>
+      <nav class="section-nav section-nav-compact" id="sectionNav">{% for type_key, items in groups.items() %}<button type="button" data-type="{{ type_key }}" title="{{ type_labels[type_key] }}"><span class="nav-dot"></span><span><strong>{{ type_labels[type_key] }}</strong><small>{{ items|length }}</small></span></button>{% endfor %}</nav>
+      <div class="security-mini"><span class="shield-icon">{{ icon('fingerprint') }}</span><div><strong>{{ t('Exam monitoring') }}</strong><small><span id="focusIncidentCount">{{ (attempt['focus_departures'] or 0) + (attempt['blur_events'] or 0) }}</span> {{ t('window/app focus changes recorded') }}</small></div><button type="button" class="focus-mode-btn icon-focus-btn icon-only" id="focusModeBtn" title="{{ t('Enter focus mode') }}" aria-label="{{ t('Enter focus mode') }}">{{ icon('arrows-out') }}</button></div>
+    </aside>
+    <main class="exam-main">
+      <form id="examForm" data-attempt-id="{{ attempt['id'] }}"
+            data-initial-focus="{{ attempt['focus_departures'] or 0 }}" data-initial-blur="{{ attempt['blur_events'] or 0 }}"
+            data-initial-pagehide="{{ attempt['pagehide_events'] or 0 }}" data-initial-contextmenu="{{ attempt['context_menu_attempts'] or 0 }}"
+            data-initial-copy="{{ attempt['copy_attempts'] or 0 }}" data-initial-cut="{{ attempt['cut_attempts'] or 0 }}"
+            data-initial-paste="{{ attempt['paste_attempts'] or 0 }}" data-initial-shortcuts="{{ attempt['shortcut_attempts'] or 0 }}"
+            data-initial-fullscreen="{{ attempt['fullscreen_exits'] or 0 }}" data-initial-away="{{ attempt['away_seconds'] or 0 }}"
+             data-initial-longest-away="{{ attempt['longest_away_seconds'] or 0 }}" method="post" action="{{ url_for('submit_exam') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="security_focus_departures" id="security_focus_departures"><input type="hidden" name="security_blur_events" id="security_blur_events">
+        <input type="hidden" name="security_pagehide_events" id="security_pagehide_events"><input type="hidden" name="security_contextmenu_attempts" id="security_contextmenu_attempts">
+        <input type="hidden" name="security_copy_attempts" id="security_copy_attempts"><input type="hidden" name="security_cut_attempts" id="security_cut_attempts">
+        <input type="hidden" name="security_paste_attempts" id="security_paste_attempts"><input type="hidden" name="security_shortcut_attempts" id="security_shortcut_attempts">
+        <input type="hidden" name="security_fullscreen_exits" id="security_fullscreen_exits"><input type="hidden" name="security_away_seconds" id="security_away_seconds"><input type="hidden" name="security_longest_away_seconds" id="security_longest_away_seconds">
+        {% set ns = namespace(index=0) %}
+        {% for type_key, items in groups.items() %}{% for q in items %}{% set ns.index = ns.index + 1 %}
+        <article class="question-card" data-index="{{ ns.index - 1 }}" data-qid="{{ q.id }}" data-type="{{ q.type }}" hidden>
+          <div class="question-meta"><span class="unit-badge">{{ q.category_name }}</span><span>{{ type_labels[q.type] }}</span><span class="question-number">{{ ns.index }} / {{ total }}</span></div>
+          <h2 tabindex="-1">{{ q.prompt }}</h2><p class="question-error" role="alert" hidden></p>
+          {% if q.type in ['multiple_choice', 'listening', 'true_false'] %}
+            {% if q.type == 'listening' %}<div class="listening-box">{% if q.listening_source == 'audio' %}<audio id="audio_{{ q.id }}" preload="metadata" src="{{ url_for('static', filename='audio/' + q.audio) }}"></audio>{% endif %}<button type="button" class="audio-btn" {% if q.listening_source == 'audio' %}data-audio="audio_{{ q.id }}" data-source="audio"{% else %}data-source="tts" data-script-url="{{ url_for('listening_script', question_id=q.id) }}" data-lang="{{ q.tts_lang or 'auto' }}"{% endif %} data-maxplays="{{ listening_max_plays }}"><span class="play-icon">{{ icon('play') }}</span><span>{{ t('Play audio') }}</span><small>{{ listening_max_plays }} {{ t('plays available') }}</small></button><div class="audio-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>{% endif %}
+            <div class="choice-grid">{% for value, label in q.choices %}<label class="choice-option"><input type="radio" name="q_{{ q.id }}" value="{{ value }}"><span class="choice-letter">{{ loop.index }}</span><span>{{ label }}</span></label>{% endfor %}</div>
+          {% endif %}
+          {% if q.type == 'short_answer' %}<p class="instruction">{{ t('Type your answer in the box.') }}</p><label class="answer-field"><input type="text" name="q_{{ q.id }}" maxlength="300" autocomplete="off" placeholder="{{ t('Your answer') }}"></label>{% endif %}
+          {% if q.type == 'numeric' %}<p class="instruction">{{ t('Enter a numeric value. Use a decimal point or comma if needed.') }}</p><label class="answer-field"><input type="text" inputmode="decimal" name="q_{{ q.id }}" maxlength="60" autocomplete="off" placeholder="{{ t('Numeric answer') }}"></label>{% endif %}
+          {% if q.type == 'order' %}<p class="instruction">{{ t('Drag the cards or use the arrow buttons to arrange the items in the correct order.') }}</p><div class="sortable-list" data-order-list="{{ q.id }}">{% for value, label in q['items'] %}<div class="sort-item" draggable="true" data-value="{{ value }}"><span class="drag-handle">⋮⋮</span><span class="sort-label">{{ label }}</span><span class="sort-actions"><button type="button" class="move-up" aria-label="{{ t('Move up') }}">↑</button><button type="button" class="move-down" aria-label="{{ t('Move down') }}">↓</button></span></div>{% endfor %}</div><input type="hidden" name="q_{{ q.id }}" id="order_{{ q.id }}"><input type="hidden" name="q_{{ q.id }}__touched" id="order_touched_{{ q.id }}" value="0">{% endif %}
+          {% if q.type == 'matching' %}<p class="instruction">{{ t('Choose the best match for each item.') }}</p><div class="matching-grid">{% for left_value, left_label in q.left %}<label class="match-row"><span>{{ left_label }}</span><span class="match-arrow">→</span><select name="q_{{ q.id }}__{{ left_value }}"><option value="">{{ t('Select...') }}</option>{% for right_value, right_label in q.right %}<option value="{{ right_value }}">{{ right_label }}</option>{% endfor %}</select></label>{% endfor %}</div>{% endif %}
+        </article>{% endfor %}{% endfor %}
+        <div class="question-footer"><button type="button" class="ghost-btn" id="prevBtn">{{ icon('arrow-left') }}{{ t('Previous') }}</button><div class="question-dots" id="questionDots"></div><button type="button" class="primary-btn compact" id="nextBtn">{{ t('Next') }}{{ icon('arrow-right') }}</button><button type="button" class="submit-btn" id="reviewBtn" hidden>{{ t('Review & submit') }}</button></div>
+      </form>
+    </main>
+  </div>
+</div>
+<div class="modal-backdrop" id="reviewModal" hidden><section class="review-modal" role="dialog" aria-modal="true" aria-labelledby="reviewTitle"><div class="modal-icon">{{ icon('check-circle') }}</div><h2 id="reviewTitle">{{ t('Ready to submit?') }}</h2><p id="reviewMessage">{{ t('Review your progress before sending your answers.') }}</p><div class="review-stats"><div><strong id="modalAnswered">0</strong><span>{{ t('Answered') }}</span></div><div><strong id="modalMissing">0</strong><span>{{ t('Missing') }}</span></div><div><strong>{{ total }}</strong><span>{{ t('Total') }}</span></div></div><div class="modal-actions"><button type="button" class="ghost-btn" id="closeReview">{{ t('Keep reviewing') }}</button><button type="button" class="primary-btn" id="confirmSubmit">{{ t('Submit assessment') }}</button></div></section></div>
+<script>window.AS_I18N={{ exam_js_i18n|tojson }};window.AS_SERVER_DRAFT={{ server_draft|tojson }};window.AS_INVALID_QUESTION={{ invalid_question|tojson }};</script>
+<script src="{{ url_for('static', filename='js/exam.js') }}"></script>
+{% endblock %}

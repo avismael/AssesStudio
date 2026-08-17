@@ -1,0 +1,8 @@
+Asignatura,Categoria,Tipo,Pregunta,Opciones,Respuesta,Pares,Orden,Tolerancia,SensibleMayusculas,Script,Audio,FuenteAudio,IdiomaVoz
+,,multiple_choice,¿Cuál opción es correcta?,A|B|C|D,B,,,,,,,,
+,,true_false,La afirmación es verdadera.,,verdadero,,,,,,,,
+,,short_answer,Escribe una respuesta válida.,,respuesta|otra respuesta,,,,no,,,,
+,,numeric,¿Cuál es el resultado?,,10,,,0.5,,,,,
+,,order,Ordena los pasos.,,,, ,Paso 1|Paso 2|Paso 3,,,,,,
+,,matching,Relaciona correctamente.,,,A=>1|B=>2|C=>3,,,,,,,
+,,listening,Escucha y selecciona.,Yes|No,Yes,,,,,This sentence is read by the browser.,,tts,en-US

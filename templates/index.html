@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ t('Student portal') }}{% endblock %}
+{% block body %}
+<main class="login-shell student-protected-page">
+  <section class="login-card login-card-basic">
+      <div class="brand-mark">AS</div>
+      <p class="eyebrow">{{ institution }}</p>
+      <h1>{{ t('Student portal') }}</h1>
+      <p class="lead">{{ subtitle }}</p>
+      <form action="{{ url_for('start') }}" method="post" class="login-form" autocomplete="on">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label><span>{{ t('Email address') }}</span><input type="email" name="email" maxlength="254" required autocomplete="username" inputmode="email" placeholder="{{ t('student@example.com') }}"></label>
+        <label><span>{{ t('Password') }}</span><input type="password" name="password" minlength="8" maxlength="128" required autocomplete="current-password" placeholder="••••••••"></label>
+        <button class="primary-btn" type="submit">{{ icon('user-circle') }}{{ t('Sign in') }}</button>
+      </form>
+      <p class="login-help">{{ t('Forgot your password? Ask your teacher to reset it.') }}</p>
+      <a class="teacher-link icon-label" href="{{ url_for('teacher') }}">{{ icon('chalkboard-teacher') }}{{ t('Teacher access') }}</a>
+  </section>
+</main>
+{% endblock %}

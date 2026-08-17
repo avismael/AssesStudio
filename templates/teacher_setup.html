@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ t('Setup') }}{% endblock %}
+{% block body %}
+<main class="teacher-shell">
+  <div class="teacher-shell-grid">
+{% set active_page = "setup" %}{% include "_teacher_nav.html" %}
+  <div class="teacher-workspace">
+<header class="teacher-header"><div><p class="eyebrow">{{ t('Global settings') }}</p><h1>{{ t('Setup') }}</h1><p>{{ t('Configure the application interface and institution defaults.') }}</p></div><div class="teacher-actions"><a class="ghost-btn" href="{{ url_for('index') }}" target="_blank">{{ icon('eye') }}{{ t('Preview student page') }}</a></div></header>
+<div class="setup-layout"><form class="setup-card" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><h2>{{ t('Global settings') }}</h2><label><span>{{ t('Institution') }}</span><input type="text" name="institution_name" value="{{ settings.institution_name }}" required maxlength="120"></label><label><span>{{ t('Student-page description') }}</span><textarea name="assessment_subtitle" rows="3" maxlength="400">{{ settings.assessment_subtitle }}</textarea></label><label><span>{{ t('Interface language') }}</span><select name="ui_language"><option value="es" {{ 'selected' if settings.ui_language=='es' else '' }}>{{ t('Spanish') }}</option><option value="en" {{ 'selected' if settings.ui_language=='en' else '' }}>English</option></select></label><label><span>{{ t('Audio play limit') }}</span><input type="number" name="listening_max_plays" value="{{ settings.listening_max_plays }}" min="1" max="5"></label><h2>{{ t('Usage rules') }}</h2><label><span>{{ t('Rules version') }}</span><input type="text" name="rules_version" value="{{ settings.rules_version }}" required maxlength="40"></label><label><span>{{ t('Spanish usage rules') }}</span><textarea name="student_rules_es" rows="8" maxlength="5000" required>{{ settings.student_rules_es }}</textarea></label><label><span>{{ t('English usage rules') }}</span><textarea name="student_rules_en" rows="8" maxlength="5000" required>{{ settings.student_rules_en }}</textarea></label><label class="toggle-row"><input type="checkbox" name="require_rules_acknowledgment" {{ 'checked' if settings.require_rules_acknowledgment == '1' else '' }}><span><strong>{{ t('Require acknowledgment each session') }}</strong></span></label><button class="primary-btn" type="submit">{{ t('Save changes') }}</button></form><aside class="composition-card"><p class="eyebrow">{{ t('Assessments') }}</p><div class="composition-total"><strong>{{ published_count }}</strong><span>{{ t('Published exams') }}</span></div><div class="composition-total"><strong>{{ exam_count }}</strong><span>{{ t('Total') }}</span></div><a class="primary-btn" href="{{ url_for('teacher_exams') }}">{{ t('Manage exam') }}</a></aside></div>
+  </div>
+  </div>
+</main>
+{% endblock %}

@@ -1,0 +1,35 @@
+<!doctype html>
+{% from "_icons.html" import icon %}
+<html lang="{{ ui_language }}" translate="no" class="notranslate">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eef3fa">
+  <meta name="google" content="notranslate">
+  <title>{% block title %}Assessment Studio{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body data-confirm-yes="{{ t('Yes, continue') }}" data-confirm-no="{{ t('No, cancel') }}" data-confirm-title="{{ t('Are you sure?') }}">
+  <a class="skip-link" href="#main-content">{{ t('Skip to main content') }}</a>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="toast-stack" aria-live="polite">
+      {% for category, message in messages %}
+      <div class="toast {{ category }}" role="status" data-toast data-timeout="{{ 8000 if category == 'error' else 5200 }}">
+        <span class="toast-message">{{ message }}</span>
+        <button class="toast-close icon-only" type="button" data-dismiss-toast aria-label="{{ t('Close') }}">{{ icon('x') }}</button>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  {% endwith %}
+  <div id="main-content" tabindex="-1">{% block body %}{% endblock %}</div>
+  {% if session.get('teacher_authenticated') %}<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11" defer></script>{% endif %}
+  <script>window.AS_UI_I18N={{ {'expandNavigation': t('Expand navigation'), 'collapseNavigation': t('Collapse navigation'), 'copied': t('Copied'), 'confirmTitle': t('Are you sure?')}|tojson }};</script>
+  <script src="{{ url_for('static', filename='js/ui.js') }}" defer></script>
+  {% if not session.get('teacher_authenticated') and request.endpoint in ['index','student_dashboard','student_change_password','exam','result'] %}<script src="{{ url_for('static', filename='js/student_guard.js') }}" defer></script>{% endif %}
+</body>
+</html>

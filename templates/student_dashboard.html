@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ t('My assessments') }}{% endblock %}
+{% block body %}
+<main class="student-home-shell student-protected-page">
+  <header class="student-home-topbar page-header">
+    <div class="student-brand"><span class="brand-mark mini" aria-hidden="true">AS</span><div><p class="eyebrow">{{ institution }}</p><h1>{{ t('My assessments') }}</h1><p>{{ t('See what is ready, resume active work, and review submitted results.') }}</p></div></div>
+    <div class="student-account-actions"><a class="ghost-btn compact" href="{{ url_for('student_change_password') }}">{{ icon('key') }}{{ t('Change password') }}</a><form method="post" action="{{ url_for('student_logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="ghost-btn compact" type="submit">{{ icon('sign-out') }}{{ t('Sign out') }}</button></form></div>
+  </header>
+
+  <section class="student-dashboard-grid">
+    <article class="student-welcome-card">
+      <div><p class="eyebrow">{{ t('Student dashboard') }}</p><h2>{{ t('Welcome') }}, {{ student['full_name'].split(' ')[0] }}</h2><p>{{ t('Each assessment keeps its assigned version and can be submitted only once.') }}</p></div>
+      <div class="student-progress-ring" style="--progress:{{ dashboard_stats.completion_rate }}%"><span><strong>{{ '%.0f'|format(dashboard_stats.completion_rate) }}%</strong><small>{{ t('complete') }}</small></span></div>
+    </article>
+    <article class="student-next-card">
+      <p class="eyebrow">{{ t('Next step') }}</p>
+      {% if dashboard_stats.next_exam %}<span class="exam-state {{ 'progress' if dashboard_stats.next_exam['attempt_status'] == 'in_progress' else 'available' }}">{{ t('In progress') if dashboard_stats.next_exam['attempt_status'] == 'in_progress' else t('Available') }}</span><h2>{{ dashboard_stats.next_exam['title'] }}</h2><p>{{ dashboard_stats.next_exam['description'] or t('This assessment is assigned to your section.') }}</p><form method="post" action="{{ url_for('start_assigned_exam', assignment_id=dashboard_stats.next_exam['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="primary-btn" type="submit">{{ icon('play') }}{{ t('Resume') if dashboard_stats.next_exam['attempt_status'] == 'in_progress' else t('Start exam') }}</button></form>{% else %}<h2>{{ t('Nothing pending') }}</h2><p>{{ t('You have submitted every assigned assessment.') }}</p>{% endif %}
+    </article>
+    <article class="student-profile-card"><span class="student-profile-avatar" aria-hidden="true">{{ student['full_name'][0]|upper }}</span><div><strong>{{ student['full_name'] }}</strong><small>{{ student['section_name'] }}</small><span>{{ student['email'] }}</span></div></article>
+  </section>
+
+  <section class="kpi-grid student-kpis" aria-label="{{ t('Assessment statistics') }}">
+    <article class="kpi-card" data-stat="total-assigned" data-value="{{ dashboard_stats.total_assigned }}"><span>{{ t('Assigned') }}</span><strong>{{ dashboard_stats.total_assigned }}</strong><small>{{ t('total exams') }}</small></article>
+    <article class="kpi-card" data-stat="available" data-value="{{ dashboard_stats.available }}"><span>{{ t('Available') }}</span><strong>{{ dashboard_stats.available }}</strong><small>{{ t('ready to start') }}</small></article>
+    <article class="kpi-card" data-stat="in-progress" data-value="{{ dashboard_stats.in_progress }}"><span>{{ t('In progress') }}</span><strong>{{ dashboard_stats.in_progress }}</strong><small>{{ t('ready to resume') }}</small></article>
+    <article class="kpi-card" data-stat="completed" data-value="{{ dashboard_stats.completed }}"><span>{{ t('Completed') }}</span><strong>{{ dashboard_stats.completed }}</strong><small>{{ t('submitted attempts') }}</small></article>
+    <article class="kpi-card kpi-card-featured" data-stat="average-grade" data-value="{{ '%.1f'|format(dashboard_stats.average_grade) if dashboard_stats.average_grade is not none else '' }}"><span>{{ t('Average grade') }}</span><strong>{{ '%.1f'|format(dashboard_stats.average_grade) if dashboard_stats.average_grade is not none else '—' }}</strong><small>{{ t('out of 10') if dashboard_stats.average_grade is not none else t('No submitted grades') }}</small></article>
+  </section>
+
+  <section class="content-section">
+    <div class="section-title-row"><div><p class="eyebrow">{{ t('Assessments') }}</p><h2>{{ t('Your assigned work') }}</h2></div><span class="data-chip">{{ dashboard_stats.pending }} {{ t('pending') }}</span></div>
+    <div class="student-exam-grid">
+      {% for item in exams %}<article class="student-exam-card {{ 'completed' if item['attempt_status'] == 'submitted' else 'progress' if item['attempt_status'] == 'in_progress' else '' }}">
+        <div class="student-exam-card-head"><span>{{ item['subject_name'] }}</span>{% if item['attempt_status'] == 'submitted' %}<strong class="exam-state completed">{{ t('Completed') }}</strong>{% elif item['attempt_status'] == 'in_progress' %}<strong class="exam-state progress">{{ t('In progress') }}</strong>{% else %}<strong class="exam-state available">{{ t('Available') }}</strong>{% endif %}</div>
+        <h3>{{ item['title'] }}</h3><p>{{ item['description'] or '' }}</p><div class="student-exam-meta"><span><strong>{{ item['version_count'] }}</strong> {{ t('Versions') }}</span><span>·</span><span>{{ t('One attempt only') }}</span></div>
+        <div class="random-version-note">{{ icon('shuffle' if item['version_mode'] == 'random' else 'lock-key') }}<span>{{ t('A version will be assigned automatically when you start.') if item['version_mode'] == 'random' else t('This exam uses a fixed version for your section.') }}</span></div>
+        <div class="student-exam-actions">{% if item['attempt_status'] == 'submitted' %}<a class="ghost-btn" href="{{ url_for('result', attempt_id=item['attempt_id']) }}">{{ icon('eye') }}{{ t('View') }} · {{ item['adjusted_grade10'] }}/10</a>{% else %}<form method="post" action="{{ url_for('start_assigned_exam', assignment_id=item['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="primary-btn" type="submit">{{ icon('play') }}{{ t('Resume') if item['attempt_status'] == 'in_progress' else t('Start exam') }}</button></form>{% endif %}</div>
+      </article>{% else %}<div class="empty-state student-empty">{{ icon('empty-duotone') }}<h2>{{ t('No exams available') }}</h2><p>{{ t('Your teacher has not assigned an active exam to your section yet.') }}</p></div>{% endfor %}
+    </div>
+  </section>
+</main>
+{% if require_rules %}
+<dialog class="app-modal rules-modal" id="studentRulesModal" data-static-modal aria-labelledby="studentRulesTitle">
+  <form class="modal-form" method="post" action="{{ url_for('acknowledge_student_rules') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="rules_version" value="{{ rules.version }}">
+    <header class="modal-header"><div><p class="eyebrow">{{ t('Rules version') }} {{ rules.version }}</p><h2 id="studentRulesTitle">{{ t('Usage rules') }}</h2><p class="modal-subtitle">{{ t('Read and accept these rules before continuing.') }}</p></div></header>
+    <div class="modal-body"><div class="rules-copy">{{ rules.text }}</div><label class="rules-accept"><input type="checkbox" name="accept_rules" value="1" required><span>{{ t('I have read and accept the usage rules.') }}</span></label></div>
+    <footer class="modal-actions"><button class="primary-btn" type="submit" disabled data-rules-accept>{{ t('Accept and continue') }}</button></footer>
+  </form>
+</dialog>
+{% endif %}
+{% endblock %}
