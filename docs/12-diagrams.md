@@ -21,7 +21,7 @@ Los IDs y labels evitan caracteres Mermaid ambiguos. Diagramas adicionales: [con
 | D07 | Navegación, validación y submit | Flowchart | Implementado |
 | D08 | Integridad y penalización | Sequence | Implementado |
 | D09 | Resultado y exports | Flowchart | Implementado |
-| D10 | Topología de despliegue | Flowchart | Recomendado |
+| D10 | Topología de despliegue | Flowchart | Implementado; TLS proxy recomendado |
 | D11 | CI/calidad | Flowchart | Recomendado como workflow; comandos implementados |
 | D12 | Incidente y restore | Flowchart | Recomendado |
 | D13 | Estado del attempt | State | Implementado |
@@ -36,7 +36,7 @@ flowchart LR
     Student[Estudiante] --> App[Assessment Studio]
     Teacher[Docente] --> App
     Admin[Administrador] --> App
-    App --> DB[(SQLite)]
+    App --> DB[(PostgreSQL)]
     App --> Audio[(Audio local)]
     Student -. Voz TTS local .-> Speech[Web Speech API]
 ```
@@ -54,7 +54,7 @@ flowchart TB
     Flask --> Exam[Exam allocation snapshot grading]
     Flask --> Import[CSV import]
     Flask --> Export[PDF CSV XLSX]
-    Auth --> DB[(SQLite)]
+    Auth --> DB[(PostgreSQL)]
     Exam --> DB
     Import --> DB
     Export --> DB
@@ -94,7 +94,7 @@ erDiagram
 sequenceDiagram
     participant T as Teacher
     participant F as Flask
-    participant D as SQLite
+    participant D as PostgreSQL
     T->>F: POST teacher email password
     F->>D: SELECT teacher by email
     D-->>F: account hash role active
@@ -114,7 +114,7 @@ sequenceDiagram
 sequenceDiagram
     participant S as Student
     participant F as Flask
-    participant D as SQLite
+    participant D as PostgreSQL
     S->>F: POST start with CSRF
     F->>D: active student and section by email
     F->>F: verify password
@@ -138,10 +138,10 @@ sequenceDiagram
 sequenceDiagram
     participant S as Student
     participant F as Flask
-    participant D as SQLite
+    participant D as PostgreSQL
     S->>F: POST start assignment
     F->>D: validate rules student section exam
-    F->>D: find prior attempt
+        F->>D: lock assignment and find prior attempt
     alt Prior attempt
         D-->>F: same attempt and version
     else New attempt
@@ -188,7 +188,7 @@ flowchart TD
 sequenceDiagram
     participant B as Browser
     participant F as Flask
-    participant D as SQLite
+    participant D as PostgreSQL
     participant T as Owner teacher
     B->>F: POST integrity event JSON
     F->>D: validate own in progress attempt
@@ -223,15 +223,15 @@ flowchart LR
     PDF --> Penalty
 ```
 
-## D10 - Despliegue recomendado
+## D10 - Despliegue implementado
 
 ```mermaid
 flowchart LR
     Browser -->|TLS| Proxy[Reverse proxy]
     Proxy --> WSGI[WSGI server]
     WSGI --> App[Flask]
-    App --> DB[(SQLite volume)]
-    App --> Audio[(Audio volume)]
+    App --> DB[(PostgreSQL postgres_data)]
+    App --> Audio[(uploaded_audio)]
     DB --> Backup[Encrypted backup]
     Audio --> Backup
     Monitor[Monitoring] --> Proxy
@@ -311,7 +311,7 @@ No hay restore de examen archivado en la UI actual; sí existe restore de versio
 sequenceDiagram
     participant T as Teacher
     participant F as Flask
-    participant D as SQLite
+    participant D as PostgreSQL
     T->>F: create or import own questions
     F->>D: insert with teacher_id
     T->>F: create exam
@@ -331,7 +331,7 @@ sequenceDiagram
     participant S as Student
     participant B as Browser JS
     participant F as Flask
-    participant D as SQLite
+    participant D as PostgreSQL
     S->>F: authenticate and acknowledge rules
     S->>F: start assignment
     F->>D: allocate and snapshot

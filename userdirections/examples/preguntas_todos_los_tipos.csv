@@ -1,0 +1,8 @@
+Asignatura,Categoria,Tipo,Pregunta,Opciones,Respuesta,Pares,Orden,Tolerancia,SensibleMayusculas,Script,Audio,FuenteAudio,IdiomaVoz
+General,General,multiple_choice,"¿Cuál es el resultado de 2 + 2?","3|4|5",4,,,,,,,,
+General,General,true_false,"La Tierra orbita alrededor del Sol.",,verdadero,,,,,,,,
+General,General,short_answer,"Escribe una forma aceptada de nombrar H2O.",,"agua|Agua",,,,no,,,,
+General,General,numeric,"¿Cuál es la mitad de 7?",,3.5,,,0.01,,,,,
+General,General,order,"Ordena las etapas de una investigación sencilla.",,,,"Observar|Formular una pregunta|Comprobar|Concluir",,,,,,
+General,General,matching,"Relaciona cada concepto con su descripción.",,,"evaporación=>líquido a gas|condensación=>gas a líquido",,,,,,,
+General,General,listening,"Escucha y selecciona la palabra pronunciada.","casa|mesa|libro",casa,,,,,"La palabra es casa.",,tts,es-MX

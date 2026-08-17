@@ -57,14 +57,14 @@ Cambiar texto ES o EN hace auto-increment de `rules_version`. Aunque el formular
 | Área | Limitación actual | Estado futuro |
 |---|---|---|
 | Instituciones | Una institución lógica; sin `institution_id` | Roadmap |
-| Base | SQLite sin WAL/busy timeout explícito | Hardening/roadmap PostgreSQL |
-| Servidor | `app.run` para desarrollo | Producción requiere WSGI/proxy |
+| Base | PostgreSQL 17, pool psycopg y Alembic | Implementado; tuning/carga continua |
+| Servidor | Gunicorn en Compose; `app.run` solo desarrollo | TLS proxy recomendado |
 | Auth | Sin rate limiting, MFA, SSO o recuperación autónoma | Roadmap |
 | Login docente | POST sin token CSRF | Hardening recomendado |
 | API integridad | POST JSON sin token CSRF; usa sesión/ownership/allowlist | Hardening recomendado |
 | Logout docente | CSRF solo si la sesión ya marca teacher autenticado | Hardening recomendado |
-| Resultado/PDF teacher | Ownership con sesión existente, sin revalidar cuenta activa | Hardening recomendado |
-| Cookies | Flags productivos no configurados explícitamente | Hardening recomendado |
+| Resultado/PDF teacher | Ownership y cuenta activa revalidados por lectura | Implementado |
+| Cookies | `Secure` por default, `HttpOnly` y `SameSite` explícitos; override HTTP local documentado | Implementado; TLS productivo obligatorio |
 | Disponibilidad | Sin due dates/windows/time limits | Roadmap |
 | Auditoría | Solo penalties y señales; no admin audit general | Roadmap |
 | Integridad | Browser deterrence manipulable/falsos positivos | Limitación inherente |
@@ -72,10 +72,10 @@ Cambiar texto ES o EN hace auto-increment de `rules_version`. Aunque el formular
 | CSV | Sin mitigación explícita de formula injection | Hardening recomendado |
 | i18n | Global, no preferencia individual; contenido no traducido | Roadmap opcional |
 | Analytics | KPIs dashboard básicos, sin item analysis | Roadmap |
-| QA | Sin E2E/axe/load/CI config | Roadmap de calidad |
-| Health | Sin endpoint dedicado ni logs estructurados | Operación recomendada |
+| QA | PostgreSQL y concurrencia focalizada; sin E2E/axe/carga sostenida/CI | Roadmap de calidad |
+| Health | Liveness/readiness implementados; sin logs estructurados | Observabilidad recomendada |
 | Retención | Sin purge/anonymization/legal hold | Gobierno institucional |
-| Schema parity | FKs/defaults difieren entre initializers | Corrección recomendada |
+| Backups | Volúmenes persistentes sin automatización de backup | Automatizar dump/audio/restore drill |
 
 ## Roadmap
 
@@ -83,12 +83,10 @@ Todo este apartado es **Roadmap**, no funcionalidad disponible.
 
 ### Fase 1 - Hardening
 
-- Rate limiting/login throttling y cookies productivas.
+- Rate limiting/login throttling y expiración explícita de sesión.
 - CSRF en login/API/logout según threat review y una política consistente.
-- Revalidación de cuenta activa en resultado/PDF para sesiones teacher.
 - Validación MIME/audio, cuotas y CSV formula safety.
-- Alinear DDL `app.py`/`seed.py` y fixtures de migración.
-- Logging estructurado, health/readiness y backup automation.
+- Logging estructurado y backup automation.
 - E2E, accessibility y load tests.
 - Auditoría de cambios administrativos.
 
@@ -102,8 +100,8 @@ Todo este apartado es **Roadmap**, no funcionalidad disponible.
 
 ### Fase 3 - Escala
 
-- PostgreSQL con migración probada.
-- Contenedores/release automation y observabilidad.
+- Tuning PostgreSQL/Gunicorn basado en carga y SLO.
+- Release automation y observabilidad.
 - `institution_id` transversal antes de SaaS multi-school.
 - Endpoint autenticado/media privada u object storage con URLs firmadas para audio confidencial.
 - API/integraciones LMS solo con contrato y auth formal.
@@ -152,6 +150,8 @@ No duplicar explicaciones completas en varios documentos: enlazar a la autoridad
 - [Listening sources y version archive](../CHANGELOG_FINAL_LISTENING_VERSIONS.md)
 - [Imports y UX](../CHANGELOG_IMPORTS_UX.md)
 - [Required answers, rules y penalties](../CHANGELOG_REQUIRED_ANSWERS_RULES_PENALTIES.md)
+- [PostgreSQL y Docker](../CHANGELOG_POSTGRES_DOCKER.md)
+- [Manuales de usuario](../CHANGELOG_USER_MANUALS.md)
 
 Los changelogs son históricos y pueden estar en inglés. Esta suite describe el estado consolidado actual.
 

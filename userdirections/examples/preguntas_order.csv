@@ -1,0 +1,2 @@
+Asignatura,Categoria,Tipo,Pregunta,Opciones,Respuesta,Pares,Orden,Tolerancia,SensibleMayusculas,Script,Audio,FuenteAudio,IdiomaVoz
+General,General,order,"Ordena los números de menor a mayor.",,,,"uno|dos|tres|cuatro",,,,,,

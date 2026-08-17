@@ -3,7 +3,7 @@
 This file is the working contract for AI coding agents (including OpenCode) modifying this repository.
 
 ## Product
-Assessment Studio is a bilingual Flask/SQLite assessment platform for teachers and students. It supports shared institutional rosters, multiple teacher accounts, reusable question banks, multiple exams per subject, versions per exam, section assignments, balanced random version allocation, one attempt per student, automatic grading, listening (uploaded audio or browser TTS), integrity event logging, PDF reports, and CSV/XLSX exports.
+Assessment Studio is a bilingual Flask/PostgreSQL assessment platform for teachers and students. It supports shared institutional rosters, multiple teacher accounts, reusable question banks, multiple exams per subject, versions per exam, section assignments, balanced random version allocation, one attempt per student, automatic grading, listening (uploaded audio or browser TTS), integrity event logging, PDF reports, and CSV/XLSX exports.
 
 ## Non-negotiable invariants
 1. Never expose correct answers or listening scripts in the initial student exam HTML.
@@ -20,7 +20,9 @@ Assessment Studio is a bilingual Flask/SQLite assessment platform for teachers a
 12. Student question navigation must focus/scroll to the newly displayed question, never to page top.
 
 ## Architecture boundaries
-- `app.py`: Flask routes, database initialization/migrations, auth, grading, exports.
+- `app.py`: Flask routes, runtime bootstrap defaults, auth, grading, exports.
+- `database.py`: psycopg pool and connection/transaction boundary.
+- `migrations/`: versioned PostgreSQL schema managed by Alembic.
 - `templates/`: Jinja views. Keep business/security decisions server-side.
 - `static/js/exam.js`: question interaction and exam telemetry only.
 - `static/js/ui.js`: generic UI behavior, modals/alerts/navigation.
@@ -47,7 +49,7 @@ Assessment Studio is a bilingual Flask/SQLite assessment platform for teachers a
 - Keep TTS script endpoint authenticated, attempt-scoped, question-scoped, and `no-store`.
 
 ## Database changes
-Use additive migrations in `init_db()` and `ensure_column()` patterns. Existing installations must remain upgradeable. Before destructive schema changes, create an explicit migration plan in `docs/14-glossary-governance-roadmap.md` or a dedicated migration document.
+Use versioned Alembic migrations. Runtime code and `seed.py` must never create or mutate schema. Before destructive schema changes, create an explicit migration plan in `docs/14-glossary-governance-roadmap.md` or a dedicated migration document.
 
 ## UI conventions
 - Forms: 16px input text on mobile, comfortable padding, no clipped modal content.
@@ -74,7 +76,8 @@ trap 'rm -rf "$tmp_root"' EXIT
 cp -a . "$tmp_root/qquizz"
 (
   cd "$tmp_root/qquizz"
-  DATABASE_PATH="$tmp_root/seed-validation.db" python seed.py --no-results
+  DATABASE_URL="postgresql://.../qquizz_seed_test" AUDIO_DIR="$tmp_root/audio" \
+    python seed.py --confirm-development-database --no-results
 )
 ```
 

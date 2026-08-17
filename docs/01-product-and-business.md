@@ -77,7 +77,7 @@ Las cifras de desempeño académico no deben usarse como único indicador de cal
 - Carga de mantener padrón, credenciales y catálogo institucional.
 - Dependencia de voces TTS del navegador y compatibilidad del dispositivo.
 - Calidad variable de preguntas y equivalencia entre versiones.
-- Expectativas de concurrencia superiores a SQLite.
+- Expectativas de concurrencia superiores a la capacidad PostgreSQL/Gunicorn validada por carga.
 - Falta de integración con identidad institucional o LMS.
 
 ## Impulsores de coste
@@ -101,6 +101,6 @@ La institución debe informar qué telemetría se recopila, con qué propósito 
 - No prometer detección infalible de fraude.
 - Definir alcance de soporte y navegadores compatibles.
 - Definir propiedad, ubicación, respaldo y eliminación de datos.
-- Declarar límites de capacidad acordes con SQLite.
+- Declarar límites de capacidad a partir de pruebas de carga, SLO y presupuesto de conexiones PostgreSQL.
 - Establecer procedimiento de exportación al terminar el servicio.
 - Separar SLA recomendado de la disponibilidad real de una instalación local.

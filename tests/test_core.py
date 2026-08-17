@@ -4,15 +4,10 @@ import io
 import json
 import os
 import re
-import tempfile
 from pathlib import Path
 
 import pytest
 from openpyxl import load_workbook
-
-_tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
-_tmp.close()
-os.environ['DATABASE_PATH'] = _tmp.name
 
 import app  # noqa: E402
 import policy_defaults  # noqa: E402
@@ -58,8 +53,8 @@ def test_build_exam_hides_answers():
 
 def test_student_roster_schema_exists():
     with app.get_db() as conn:
-        section_columns = {row[1] for row in conn.execute("PRAGMA table_info(sections)").fetchall()}
-        student_columns = {row[1] for row in conn.execute("PRAGMA table_info(students)").fetchall()}
+        section_columns = app.table_columns(conn, "sections")
+        student_columns = app.table_columns(conn, "students")
     assert {"id", "name", "is_archived"}.issubset(section_columns)
     assert {"id", "full_name", "section_id", "student_code", "email", "password_hash", "must_change_password", "is_active"}.issubset(student_columns)
 
@@ -67,6 +62,17 @@ def test_student_roster_schema_exists():
 def test_student_access_defaults_to_accounts():
     with app.get_db() as conn:
         assert app.setting(conn, "student_access_mode") == "accounts"
+
+
+def test_session_cookie_security_defaults_and_explicit_local_override(monkeypatch):
+    assert app.app.config["SESSION_COOKIE_HTTPONLY"] is True
+    assert app.app.config["SESSION_COOKIE_SECURE"] is True
+    assert app.app.config["SESSION_COOKIE_SAMESITE"] == "Lax"
+    response = app.app.test_client().get("/")
+    cookie = response.headers.get("Set-Cookie", "")
+    assert "HttpOnly" in cookie and "Secure" in cookie and "SameSite=Lax" in cookie
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "0")
+    assert app.env_bool("SESSION_COOKIE_SECURE", True) is False
 
 
 def test_student_password_policy_and_email_normalization():
@@ -90,19 +96,20 @@ def test_ui_language_is_safe_without_request_context():
 def test_question_clone_keeps_legacy_safe_fields_and_deactivates_copy():
     with app.get_db() as conn:
         stamp = app.now_iso()
+        teacher_id = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()["id"]
         conn.execute(
-            "INSERT OR IGNORE INTO subjects(id,name,description,created_at,updated_at) VALUES(22,'Clone Test','',?,?)",
+            "INSERT INTO subjects(id,name,description,created_at,updated_at) VALUES(22,'Clone Test','',%s,%s)",
             (stamp, stamp),
         )
         conn.execute(
-            "INSERT OR IGNORE INTO categories(id,subject_id,name,description,sort_order,created_at,updated_at) VALUES(22,22,'Clone Category','',0,?,?)",
+            "INSERT INTO categories(id,subject_id,name,description,sort_order,created_at,updated_at) VALUES(22,22,'Clone Category','',0,%s,%s)",
             (stamp, stamp),
         )
         conn.execute(
-            """INSERT OR REPLACE INTO question_bank
-               (id,subject_id,category_id,type,prompt,data_json,answer_json,audio,script,is_active,is_archived,created_at,updated_at)
-               VALUES('clone_source',22,22,'multiple_choice','Original prompt','{\"choices\":[[\"c1\",\"A\"],[\"c2\",\"B\"]]}','\"c1\"',NULL,NULL,1,0,?,?)""",
-            (stamp, stamp),
+            """INSERT INTO question_bank
+               (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,audio,script,is_active,is_archived,created_at,updated_at)
+               VALUES('clone_source',%s,22,22,'multiple_choice','Original prompt','{\"choices\":[[\"c1\",\"A\"],[\"c2\",\"B\"]]}','\"c1\"',NULL,NULL,1,0,%s,%s)""",
+            (teacher_id, stamp, stamp),
         )
         source = conn.execute("SELECT * FROM question_bank WHERE id='clone_source'").fetchone()
         app.clone_question_row(conn, source, 'clone_copy')
@@ -120,36 +127,34 @@ def test_question_clone_keeps_legacy_safe_fields_and_deactivates_copy():
 def test_multi_exam_schema_exists():
     with app.get_db() as conn:
         for table in ("exams", "exam_versions", "exam_version_questions", "exam_assignments", "student_exam_allocations"):
-            assert conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
-        attempt_columns = {row[1] for row in conn.execute("PRAGMA table_info(attempts)").fetchall()}
+            assert conn.execute("SELECT to_regclass(%s) AS name", (table,)).fetchone()["name"]
+        attempt_columns = app.table_columns(conn, "attempts")
     assert {"exam_id", "exam_version_id", "assignment_id", "exam_version_name"}.issubset(attempt_columns)
 
 
 def test_student_login_forces_password_change_then_shows_exam_dashboard():
     with app.get_db() as conn:
         stamp = app.now_iso()
-        conn.execute("INSERT OR IGNORE INTO sections(id,name,description,is_archived,created_at,updated_at) VALUES(91,'Login Test','',0,?,?)", (stamp, stamp))
+        teacher_id = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()["id"]
+        conn.execute("INSERT INTO sections(id,name,description,is_archived,created_at,updated_at) VALUES(91,'Login Test','',0,%s,%s)", (stamp, stamp))
         conn.execute(
-            """INSERT OR REPLACE INTO students
+            """INSERT INTO students
                (id,full_name,section_id,student_code,email,password_hash,must_change_password,password_updated_at,notes,is_active,is_archived,created_at,updated_at)
-               VALUES(91,'Login Student',91,'LOGIN-91','login.student@example.com',?,1,?,NULL,1,0,?,?)""",
+               VALUES(91,'Login Student',91,'LOGIN-91','login.student@example.com',%s,1,%s,NULL,1,0,%s,%s)""",
             (app.generate_password_hash('TempPass123'), stamp, stamp, stamp),
         )
-        conn.execute("INSERT OR IGNORE INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(92,'Login Subject','',0,?,?)", (stamp, stamp))
-        conn.execute("INSERT OR IGNORE INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(92,92,'Login Category','',0,0,?,?)", (stamp, stamp))
+        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(92,'Login Subject','',0,%s,%s)", (stamp, stamp))
+        conn.execute("INSERT INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(92,92,'Login Category','',0,0,%s,%s)", (stamp, stamp))
         conn.execute(
-            """INSERT OR REPLACE INTO question_bank
-               (id,subject_id,category_id,type,prompt,data_json,answer_json,audio,script,is_active,is_archived,created_at,updated_at)
-               VALUES('login_q1',92,92,'multiple_choice','2 + 2?','{"choices":[["a","3"],["b","4"]]}','"b"',NULL,NULL,0,0,?,?)""",
-            (stamp, stamp),
+            """INSERT INTO question_bank
+               (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,audio,script,is_active,is_archived,created_at,updated_at)
+               VALUES('login_q1',%s,92,92,'multiple_choice','2 + 2?','{"choices":[["a","3"],["b","4"]]}','"b"',NULL,NULL,0,0,%s,%s)""",
+            (teacher_id, stamp, stamp),
         )
-        cur = conn.execute("INSERT INTO exams(subject_id,title,description,is_published,is_archived,created_at,updated_at) VALUES(92,'Login Exam','',1,0,?,?)", (stamp, stamp))
-        exam_id = cur.lastrowid
-        cur = conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(?,'A',1,?,?)", (exam_id, stamp, stamp))
-        version_id = cur.lastrowid
-        conn.execute("INSERT INTO exam_version_questions(version_id,question_id,position) VALUES(?,'login_q1',0)", (version_id,))
-        cur = conn.execute("INSERT INTO exam_assignments(exam_id,section_id,version_mode,fixed_version_id,is_active,created_at,updated_at) VALUES(?,91,'fixed',?,1,?,?)", (exam_id, version_id, stamp, stamp))
-        assignment_id = cur.lastrowid
+        exam_id = conn.execute("INSERT INTO exams(teacher_id,subject_id,title,description,is_published,is_archived,created_at,updated_at) VALUES(%s,92,'Login Exam','',1,0,%s,%s) RETURNING id", (teacher_id, stamp, stamp)).fetchone()["id"]
+        version_id = conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(%s,'A',1,%s,%s) RETURNING id", (exam_id, stamp, stamp)).fetchone()["id"]
+        conn.execute("INSERT INTO exam_version_questions(version_id,question_id,position) VALUES(%s,'login_q1',0)", (version_id,))
+        assignment_id = conn.execute("INSERT INTO exam_assignments(exam_id,section_id,version_mode,fixed_version_id,is_active,created_at,updated_at) VALUES(%s,91,'fixed',%s,1,%s,%s) RETURNING id", (exam_id, version_id, stamp, stamp)).fetchone()["id"]
         conn.commit()
 
     client = app.app.test_client()
@@ -172,7 +177,7 @@ def test_student_login_forces_password_change_then_shows_exam_dashboard():
     assert response.status_code == 302 and response.headers['Location'].endswith('/exam')
     with app.get_db() as conn:
         student = conn.execute("SELECT * FROM students WHERE id=91").fetchone()
-        attempt = conn.execute("SELECT * FROM attempts WHERE student_id=91 AND assignment_id=?", (assignment_id,)).fetchone()
+        attempt = conn.execute("SELECT * FROM attempts WHERE student_id=91 AND assignment_id=%s", (assignment_id,)).fetchone()
     with client.session_transaction() as sess:
         accepted_at = sess['rules_acknowledged_at']
     assert student['must_change_password'] == 0
@@ -187,8 +192,8 @@ def test_student_login_forces_password_change_then_shows_exam_dashboard():
 
 def test_one_attempt_unique_per_student_assignment():
     with app.get_db() as conn:
-        indexes = conn.execute("PRAGMA index_list(attempts)").fetchall()
-        names = {row[1] for row in indexes}
+        indexes = conn.execute("SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() AND tablename='attempts'").fetchall()
+        names = {row["indexname"] for row in indexes}
     assert 'idx_attempt_once_per_assignment' in names
 
 
@@ -217,7 +222,7 @@ def test_bulk_student_csv_import_generates_email_from_nie():
     import io
     with app.get_db() as conn:
         stamp = app.now_iso()
-        conn.execute("INSERT OR IGNORE INTO sections(id,name,description,is_archived,created_at,updated_at) VALUES(301,'CSV Students','',0,?,?)", (stamp, stamp))
+        conn.execute("INSERT INTO sections(id,name,description,is_archived,created_at,updated_at) VALUES(301,'CSV Students','',0,%s,%s)", (stamp, stamp))
         conn.commit()
     payload = 'NIE,Nombre,Apellido,Correo\n990001,Ana,Prueba,\n990002,Carlos,Prueba,\n'.encode('utf-8')
     client = _teacher_client()
@@ -236,8 +241,8 @@ def test_question_csv_import_supports_multiple_types():
     import io
     with app.get_db() as conn:
         stamp = app.now_iso()
-        conn.execute("INSERT OR IGNORE INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(302,'CSV Subject','',0,?,?)", (stamp, stamp))
-        conn.execute("INSERT OR IGNORE INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(302,302,'CSV Category','',0,0,?,?)", (stamp, stamp))
+        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(302,'CSV Subject','',0,%s,%s)", (stamp, stamp))
+        conn.execute("INSERT INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(302,302,'CSV Category','',0,0,%s,%s)", (stamp, stamp))
         conn.commit()
     payload = ('Tipo,Pregunta,Opciones,Respuesta,Pares,Orden,Tolerancia,SensibleMayusculas,Script,Audio\n'
                'multiple_choice,"2 + 2?","3|4|5",4,,,,,,\n'
@@ -259,12 +264,12 @@ def test_listening_without_audio_cannot_be_added_to_exam_version():
     with app.get_db() as conn:
         stamp = app.now_iso()
         teacher_id = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()['id']
-        conn.execute("INSERT OR IGNORE INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(303,'CSV Audio','',0,?,?)", (stamp, stamp))
-        conn.execute("INSERT OR IGNORE INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(303,303,'Listening','',0,0,?,?)", (stamp, stamp))
-        conn.execute("INSERT INTO exams(subject_id,teacher_id,title,description,is_published,is_archived,created_at,updated_at) VALUES(303,?,'Audio Test','',0,0,?,?)", (teacher_id, stamp, stamp))
+        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(303,'CSV Audio','',0,%s,%s)", (stamp, stamp))
+        conn.execute("INSERT INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(303,303,'Listening','',0,0,%s,%s)", (stamp, stamp))
+        conn.execute("INSERT INTO exams(subject_id,teacher_id,title,description,is_published,is_archived,created_at,updated_at) VALUES(303,%s,'Audio Test','',0,0,%s,%s)", (teacher_id, stamp, stamp))
         exam_id = conn.execute("SELECT id FROM exams WHERE subject_id=303 ORDER BY id DESC LIMIT 1").fetchone()['id']
-        conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(?,'A',1,?,?)", (exam_id, stamp, stamp))
-        version_id = conn.execute("SELECT id FROM exam_versions WHERE exam_id=? ORDER BY id DESC LIMIT 1", (exam_id,)).fetchone()['id']
+        conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(%s,'A',1,%s,%s)", (exam_id, stamp, stamp))
+        version_id = conn.execute("SELECT id FROM exam_versions WHERE exam_id=%s ORDER BY id DESC LIMIT 1", (exam_id,)).fetchone()['id']
         conn.commit()
     payload = 'Tipo,Pregunta,Opciones,Respuesta,Script\nlistening,"Listen","Yes|No",Yes,\n'.encode('utf-8')
     client = _teacher_client()
@@ -281,7 +286,7 @@ def test_listening_without_audio_cannot_be_added_to_exam_version():
     })
     assert response.status_code == 302
     with app.get_db() as conn:
-        saved = conn.execute("SELECT 1 FROM exam_version_questions WHERE version_id=? AND question_id=?", (version_id,q['id'])).fetchone()
+        saved = conn.execute("SELECT 1 FROM exam_version_questions WHERE version_id=%s AND question_id=%s", (version_id,q['id'])).fetchone()
     assert saved is None
 
 
@@ -308,24 +313,14 @@ def test_version_archive_and_restore_routes_exist():
 
 
 def test_student_result_page_does_not_offer_history_back_navigation():
+    _submission_attempt('attempt-result', student_id=401)
     with app.get_db() as conn:
         stamp = app.now_iso()
-        conn.execute("INSERT OR IGNORE INTO sections(id,name,description,is_archived,created_at,updated_at) VALUES(401,'Result Test','',0,?,?)", (stamp, stamp))
         conn.execute(
-            """INSERT OR REPLACE INTO students
-               (id,full_name,section_id,student_code,email,password_hash,must_change_password,password_updated_at,last_login_at,notes,is_active,is_archived,created_at,updated_at)
-               VALUES(401,'Result Student',401,'RES-401','result.student@example.com',?,0,?,?,?,?,0,?,?)""",
-            (app.generate_password_hash('Student123'), stamp, stamp, None, 1, stamp, stamp),
-        )
-        conn.execute(
-            """INSERT OR REPLACE INTO attempts
-               (id,student_id,student_email,student_name,section,started_at,submitted_at,seed,score,total,percentage,grade10,category_scores,type_scores,answers_json,status,questions_json,assessment_title,assessment_subject,category_labels_json,ui_language)
-               VALUES('attempt-result',401,'result.student@example.com','Result Student','Result Section',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                stamp, stamp, 1, 4.0, 4.0, 100.0, 10.0,
-                json.dumps({}), json.dumps({}), json.dumps({}), 'submitted',
-                json.dumps([]), 'Sample Exam', 'Sample Subject', json.dumps({}), 'es',
-            ),
+            """UPDATE attempts SET submitted_at=%s,score=4,total=4,percentage=100,grade10=10,
+               category_scores='{}',type_scores='{}',answers_json='{}',status='submitted'
+               WHERE id='attempt-result'""",
+            (stamp,),
         )
         conn.commit()
 
@@ -345,26 +340,27 @@ def test_teacher_dashboard_stats_are_scoped_to_teacher():
         stamp = app.now_iso()
         for teacher_id in (810, 811):
             conn.execute(
-                """INSERT OR REPLACE INTO teachers
+                """INSERT INTO teachers
                    (id,full_name,email,password_hash,role,is_active,must_change_password,created_at,updated_at)
-                   VALUES(?,?,?,?, 'teacher',1,0,?,?)""",
+                   VALUES(%s,%s,%s,%s, 'teacher',1,0,%s,%s)""",
                 (teacher_id, f'Dashboard Teacher {teacher_id}', f'dashboard{teacher_id}@example.com', app.generate_password_hash('Teacher123'), stamp, stamp),
             )
-        conn.execute("DELETE FROM attempts WHERE id IN ('dashboard-a','dashboard-b','dashboard-other')")
-        attempts = [
-            ('dashboard-a', 810, 80.0, 8.0, 0, 0),
-            ('dashboard-b', 810, 60.0, 6.0, 2, 1),
-            ('dashboard-other', 811, 100.0, 10.0, 0, 0),
-        ]
-        for attempt_id, teacher_id, percentage, grade, focus, copy in attempts:
-            conn.execute(
-                """INSERT INTO attempts
-                   (id,student_name,section,started_at,submitted_at,seed,score,total,percentage,grade10,status,
-                    focus_departures,copy_attempts,teacher_id)
-                   VALUES(?, 'Dashboard Student','A',?,?,1,8,10,?,?,'submitted',?,?,?)""",
-                (attempt_id, stamp, stamp, percentage, grade, focus, copy, teacher_id),
-            )
         conn.commit()
+    attempts = [
+        ('dashboard-a', 810, 9810, 80.0, 8.0, 0, 0),
+        ('dashboard-b', 810, 9811, 60.0, 6.0, 2, 1),
+        ('dashboard-other', 811, 9812, 100.0, 10.0, 0, 0),
+    ]
+    for attempt_id, teacher_id, student_id, percentage, grade, focus, copy in attempts:
+        _submission_attempt(attempt_id, student_id=student_id, teacher_id=teacher_id)
+        with app.get_db() as conn:
+            conn.execute(
+                """UPDATE attempts SET submitted_at=%s,score=8,total=10,percentage=%s,grade10=%s,
+                   status='submitted',focus_departures=%s,copy_attempts=%s WHERE id=%s""",
+                (app.now_iso(), percentage, grade, focus, copy, attempt_id),
+            )
+            conn.commit()
+    with app.get_db() as conn:
         visible = conn.execute("SELECT * FROM attempts WHERE teacher_id=810 AND status='submitted'").fetchall()
         stats = app.teacher_dashboard_stats(conn, 810, visible)
     assert stats['submitted'] == 2
@@ -442,14 +438,14 @@ def test_teacher_roster_renders_semantic_tables_and_preserves_row_actions():
     with app.get_db() as conn:
         stamp = app.now_iso()
         conn.execute(
-            """INSERT OR REPLACE INTO sections(id,name,description,is_archived,created_at,updated_at)
-               VALUES(913,'Responsive Roster','Morning group',0,?,?)""",
+            """INSERT INTO sections(id,name,description,is_archived,created_at,updated_at)
+               VALUES(913,'Responsive Roster','Morning group',0,%s,%s)""",
             (stamp, stamp),
         )
         conn.execute(
-            """INSERT OR REPLACE INTO students
+            """INSERT INTO students
                (id,full_name,section_id,student_code,email,password_hash,must_change_password,notes,is_active,is_archived,created_at,updated_at)
-               VALUES(913,'Roster Student',913,'RST-913','roster.student@example.com',?,1,'Needs front-row seating',1,0,?,?)""",
+               VALUES(913,'Roster Student',913,'RST-913','roster.student@example.com',%s,1,'Needs front-row seating',1,0,%s,%s)""",
             (app.generate_password_hash('Student123'), stamp, stamp),
         )
         conn.commit()
@@ -484,14 +480,14 @@ def test_teacher_roster_keeps_password_reset_disabled_without_email():
     with app.get_db() as conn:
         stamp = app.now_iso()
         conn.execute(
-            """INSERT OR REPLACE INTO sections(id,name,description,is_archived,created_at,updated_at)
-               VALUES(914,'Pending Accounts','',0,?,?)""",
+            """INSERT INTO sections(id,name,description,is_archived,created_at,updated_at)
+               VALUES(914,'Pending Accounts','',0,%s,%s)""",
             (stamp, stamp),
         )
         conn.execute(
-            """INSERT OR REPLACE INTO students
+            """INSERT INTO students
                (id,full_name,section_id,student_code,email,password_hash,must_change_password,notes,is_active,is_archived,created_at,updated_at)
-               VALUES(914,'Pending Student',914,'RST-914',NULL,NULL,0,NULL,1,0,?,?)""",
+               VALUES(914,'Pending Student',914,'RST-914',NULL,NULL,0,NULL,1,0,%s,%s)""",
             (stamp, stamp),
         )
         conn.commit()
@@ -560,7 +556,7 @@ def test_global_language_renders_spanish_and_english_login():
         conn.commit()
     assert 'Student portal' in client.get('/').get_data(as_text=True)
     with app.get_db() as conn:
-        conn.execute("UPDATE app_settings SET value=? WHERE key='ui_language'", (original,))
+        conn.execute("UPDATE app_settings SET value=%s WHERE key='ui_language'", (original,))
         conn.commit()
 
 
@@ -582,8 +578,8 @@ def test_public_login_is_basic_without_marketing_sidebar():
 def test_setup_is_admin_only():
     with app.get_db() as conn:
         stamp = app.now_iso()
-        conn.execute("""INSERT OR REPLACE INTO teachers(id,full_name,email,password_hash,role,is_active,must_change_password,created_at,updated_at)
-                        VALUES(880,'Ordinary Teacher','ordinary@example.com',?,'teacher',1,0,?,?)""",
+        conn.execute("""INSERT INTO teachers(id,full_name,email,password_hash,role,is_active,must_change_password,created_at,updated_at)
+                        VALUES(880,'Ordinary Teacher','ordinary@example.com',%s,'teacher',1,0,%s,%s)""",
                      (app.generate_password_hash('Teacher123'), stamp, stamp))
         conn.commit()
     client = app.app.test_client()
@@ -622,7 +618,7 @@ def test_setup_policy_text_change_auto_bumps_version_and_invalidates_session_ack
             app.session['rules_acknowledged_at'] = app.now_iso()
             assert not app.rules_acknowledged(conn)
         for key, value in original.items():
-            conn.execute("UPDATE app_settings SET value=? WHERE key=?", (value, key))
+            conn.execute("UPDATE app_settings SET value=%s WHERE key=%s", (value, key))
         conn.commit()
 
 
@@ -662,10 +658,47 @@ def _submission_attempt(attempt_id='submit-test', student_id=990, teacher_id=Non
         if teacher_id is None:
             teacher_id = conn.execute('SELECT id FROM teachers ORDER BY id LIMIT 1').fetchone()['id']
         stamp = app.now_iso()
-        conn.execute("DELETE FROM attempts WHERE id=?", (attempt_id,))
-        conn.execute("""INSERT INTO attempts(id,teacher_id,student_id,student_name,section,started_at,seed,status,questions_json,assessment_title,ui_language)
-                        VALUES(?,?,?,?,?,?,1,'in_progress',?,?, 'en')""",
-                     (attempt_id, teacher_id, student_id, 'Submit Student', 'T', stamp, json.dumps(questions), 'Submit Exam'))
+        conn.execute(
+            """INSERT INTO sections(id,name,is_archived,created_at,updated_at)
+               VALUES(990,'Submission Fixtures',0,%s,%s) ON CONFLICT(id) DO NOTHING""",
+            (stamp, stamp),
+        )
+        conn.execute(
+            """INSERT INTO students
+               (id,full_name,section_id,student_code,email,password_hash,must_change_password,is_active,is_archived,created_at,updated_at)
+               VALUES(%s,%s,990,%s,%s,%s,0,1,0,%s,%s)
+               ON CONFLICT(id) DO UPDATE SET full_name=excluded.full_name,updated_at=excluded.updated_at""",
+            (student_id, f'Submit Student {student_id}', f'SUBMIT-{student_id}', f'submit-{student_id}@example.invalid',
+             app.generate_password_hash('Student123'), stamp, stamp),
+        )
+        exam_id = conn.execute(
+            """INSERT INTO exams(teacher_id,subject_id,title,description,is_published,is_archived,created_at,updated_at)
+               VALUES(%s,1,%s,'Test fixture',1,0,%s,%s) RETURNING id""",
+            (teacher_id, f'Fixture Exam {attempt_id}', stamp, stamp),
+        ).fetchone()["id"]
+        version_id = conn.execute(
+            "INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(%s,'A',1,%s,%s) RETURNING id",
+            (exam_id, stamp, stamp),
+        ).fetchone()["id"]
+        assignment_id = conn.execute(
+            """INSERT INTO exam_assignments(exam_id,section_id,version_mode,fixed_version_id,is_active,created_at,updated_at)
+               VALUES(%s,990,'fixed',%s,1,%s,%s) RETURNING id""",
+            (exam_id, version_id, stamp, stamp),
+        ).fetchone()["id"]
+        conn.execute(
+            """INSERT INTO student_exam_allocations(assignment_id,student_id,version_id,allocated_at)
+               VALUES(%s,%s,%s,%s)""",
+            (assignment_id, student_id, version_id, stamp),
+        )
+        conn.execute("DELETE FROM attempt_penalties WHERE attempt_id=%s", (attempt_id,))
+        conn.execute("DELETE FROM integrity_events WHERE attempt_id=%s", (attempt_id,))
+        conn.execute("DELETE FROM attempts WHERE id=%s", (attempt_id,))
+        conn.execute("""INSERT INTO attempts
+                        (id,teacher_id,student_id,student_name,section,started_at,seed,status,questions_json,
+                         assessment_title,ui_language,exam_id,exam_version_id,assignment_id,exam_version_name)
+                        VALUES(%s,%s,%s,%s,%s,%s,1,'in_progress',%s,%s,'en',%s,%s,%s,'A')""",
+                     (attempt_id, teacher_id, student_id, 'Submit Student', 'T', stamp,
+                      json.dumps(questions), 'Submit Exam', exam_id, version_id, assignment_id))
         conn.commit()
     return questions, teacher_id
 
@@ -706,26 +739,141 @@ def test_incomplete_submission_stays_in_progress_and_valid_submission_succeeds()
         assert conn.execute("SELECT status FROM attempts WHERE id='submit-test'").fetchone()['status'] == 'submitted'
 
 
+def test_disabled_teacher_sessions_cannot_read_result_or_pdf_but_student_can():
+    teacher_id = 899
+    with app.get_db() as conn:
+        stamp = app.now_iso()
+        conn.execute(
+            """INSERT INTO teachers
+               (id,full_name,email,password_hash,role,is_active,must_change_password,created_at,updated_at)
+               VALUES(%s,'Disabled Reader','disabled-reader@example.invalid',%s,'teacher',1,0,%s,%s)""",
+            (teacher_id, app.generate_password_hash('Teacher123'), stamp, stamp),
+        )
+        conn.commit()
+    _submission_attempt('disabled-reader-attempt', student_id=998, teacher_id=teacher_id)
+    with app.get_db() as conn:
+        conn.execute(
+            """UPDATE attempts SET submitted_at=%s,score=1,total=1,percentage=100,grade10=10,
+               category_scores='{}',type_scores='{}',answers_json='{}',status='submitted'
+               WHERE id='disabled-reader-attempt'""",
+            (app.now_iso(),),
+        )
+        conn.execute("UPDATE teachers SET is_active=0 WHERE id=%s", (teacher_id,))
+        conn.commit()
+
+    for path in ('/result/disabled-reader-attempt', '/report/disabled-reader-attempt.pdf'):
+        teacher = app.app.test_client()
+        with teacher.session_transaction() as sess:
+            sess.update(teacher_authenticated=True, teacher_id=teacher_id)
+        assert teacher.get(path).status_code == 403
+        with teacher.session_transaction() as sess:
+            assert 'teacher_authenticated' not in sess and 'teacher_id' not in sess
+
+    student = app.app.test_client()
+    with student.session_transaction() as sess:
+        sess.update(student_authenticated=True, student_id=998)
+    assert student.get('/result/disabled-reader-attempt').status_code == 200
+    assert student.get('/report/disabled-reader-attempt.pdf').status_code == 200
+
+
+def test_seed_attempt_cleanup_deletes_penalties_before_attempts():
+    _, teacher_id = _submission_attempt('seed_attempt_penalty', student_id=999)
+    with app.get_db() as conn:
+        conn.execute(
+            """INSERT INTO attempt_penalties(attempt_id,teacher_id,points,reason,created_at,is_active)
+               VALUES('seed_attempt_penalty',%s,1,'Seed cleanup regression',%s,1)""",
+            (teacher_id, app.now_iso()),
+        )
+        deleted = seed.delete_seed_attempts(conn)
+        conn.commit()
+        assert deleted == ['seed_attempt_penalty']
+        assert not conn.execute("SELECT 1 FROM attempt_penalties WHERE attempt_id='seed_attempt_penalty'").fetchone()
+        assert not conn.execute("SELECT 1 FROM attempts WHERE id='seed_attempt_penalty'").fetchone()
+
+
+def test_seed_attempt_snapshots_match_allocations_and_version_questions():
+    with app.get_db() as conn:
+        try:
+            teacher_ids, _ = seed.upsert_demo_teachers(conn)
+            subject_ids = {}
+            category_ids = {}
+            for subject_spec in seed.SUBJECTS:
+                subject_id = seed.get_or_create_subject(conn, subject_spec["name"], subject_spec["description"])
+                subject_ids[subject_spec["name"]] = subject_id
+                for order, (category_name, description) in enumerate(subject_spec["categories"], start=1):
+                    category_ids[(subject_spec["name"], category_name)] = seed.get_or_create_category(
+                        conn, subject_id, category_name, description, order
+                    )
+            for (subject_name, category_name), questions in seed.demo_question_specs().items():
+                for question in questions:
+                    seed.upsert_question(
+                        conn,
+                        teacher_ids[subject_name],
+                        subject_ids[subject_name],
+                        category_ids[(subject_name, category_name)],
+                        question,
+                    )
+            roster = seed.upsert_demo_roster(conn)
+            _, assignment_map = seed.seed_demo_exams(conn, subject_ids, teacher_ids)
+
+            def assert_consistent_attempts():
+                attempts = conn.execute(
+                    """SELECT a.id,a.assignment_id,a.student_id,a.exam_version_id,a.questions_json,
+                              allocation.version_id AS allocation_version
+                       FROM attempts a JOIN student_exam_allocations allocation
+                         ON allocation.assignment_id=a.assignment_id AND allocation.student_id=a.student_id
+                       WHERE a.id LIKE 'seed_attempt_%' ORDER BY a.id"""
+                ).fetchall()
+                assert len(attempts) == 15
+                for attempt in attempts:
+                    expected_ids = [row["question_id"] for row in conn.execute(
+                        "SELECT question_id FROM exam_version_questions WHERE version_id=%s ORDER BY position,question_id",
+                        (attempt["exam_version_id"],),
+                    ).fetchall()]
+                    snapshot_ids = [question["id"] for question in json.loads(attempt["questions_json"])]
+                    assert attempt["exam_version_id"] == attempt["allocation_version"]
+                    assert snapshot_ids == expected_ids
+                return attempts
+
+            assert seed.insert_demo_attempts(conn, subject_ids, category_ids, roster, teacher_ids, assignment_map) == 15
+            attempts = assert_consistent_attempts()
+            target = attempts[0]
+            conflicting_version = conn.execute(
+                """SELECT version.id FROM exam_versions version
+                   JOIN exam_assignments assignment ON assignment.exam_id=version.exam_id
+                   WHERE assignment.id=%s AND version.id<>%s ORDER BY version.id LIMIT 1""",
+                (target["assignment_id"], target["exam_version_id"]),
+            ).fetchone()["id"]
+            conn.execute(
+                "UPDATE student_exam_allocations SET version_id=%s WHERE assignment_id=%s AND student_id=%s",
+                (conflicting_version, target["assignment_id"], target["student_id"]),
+            )
+            seed.insert_demo_attempts(conn, subject_ids, category_ids, roster, teacher_ids, assignment_map)
+            assert_consistent_attempts()
+        finally:
+            conn.rollback()
+
+
 def test_rules_acknowledgment_lifecycle_and_attempt_language_snapshot():
     client = app.app.test_client()
     with app.get_db() as conn:
         stamp = app.now_iso()
         teacher_id = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()['id']
-        conn.execute("INSERT OR REPLACE INTO sections(id,name,description,is_archived,created_at,updated_at) VALUES(591,'Rules Test','',0,?,?)", (stamp, stamp))
-        conn.execute("""INSERT OR REPLACE INTO students
+        conn.execute("INSERT INTO sections(id,name,description,is_archived,created_at,updated_at) VALUES(591,'Rules Test','',0,%s,%s)", (stamp, stamp))
+        conn.execute("""INSERT INTO students
                         (id,full_name,section_id,student_code,email,password_hash,must_change_password,is_active,is_archived,created_at,updated_at)
-                        VALUES(591,'Rules Student',591,'RULES-591','rules.student@example.com',?,0,1,0,?,?)""",
+                        VALUES(591,'Rules Student',591,'RULES-591','rules.student@example.com',%s,0,1,0,%s,%s)""",
                      (app.generate_password_hash('Student123'), stamp, stamp))
-        conn.execute("INSERT OR REPLACE INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(591,'Rules Subject','',0,?,?)", (stamp, stamp))
-        conn.execute("INSERT OR REPLACE INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(591,591,'Rules Category','',0,0,?,?)", (stamp, stamp))
-        conn.execute("""INSERT OR REPLACE INTO question_bank
+        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(591,'Rules Subject','',0,%s,%s)", (stamp, stamp))
+        conn.execute("INSERT INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(591,591,'Rules Category','',0,0,%s,%s)", (stamp, stamp))
+        conn.execute("""INSERT INTO question_bank
                         (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,is_active,is_archived,created_at,updated_at)
-                        VALUES('rules_q1',?,591,591,'multiple_choice','Rules question','{"choices":[["a","A"],["b","B"]]}','"a"',1,0,?,?)""",
+                        VALUES('rules_q1',%s,591,591,'multiple_choice','Rules question','{"choices":[["a","A"],["b","B"]]}','"a"',1,0,%s,%s)""",
                      (teacher_id, stamp, stamp))
-        exam_id = conn.execute("INSERT INTO exams(teacher_id,subject_id,title,description,is_published,is_archived,created_at,updated_at) VALUES(?,591,'Rules Exam','',1,0,?,?)", (teacher_id, stamp, stamp)).lastrowid
-        version_id = conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(?,'A',1,?,?)", (exam_id, stamp, stamp)).lastrowid
-        conn.execute("INSERT INTO exam_version_questions(version_id,question_id,position) VALUES(?,'rules_q1',0)", (version_id,))
-        assignment_id = conn.execute("INSERT INTO exam_assignments(exam_id,section_id,version_mode,fixed_version_id,is_active,created_at,updated_at) VALUES(?,591,'fixed',?,1,?,?)", (exam_id, version_id, stamp, stamp)).lastrowid
+        exam_id = conn.execute("INSERT INTO exams(teacher_id,subject_id,title,description,is_published,is_archived,created_at,updated_at) VALUES(%s,591,'Rules Exam','',1,0,%s,%s) RETURNING id", (teacher_id, stamp, stamp)).fetchone()["id"]
+        version_id = conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(%s,'A',1,%s,%s) RETURNING id", (exam_id, stamp, stamp)).fetchone()["id"]
+        conn.execute("INSERT INTO exam_version_questions(version_id,question_id,position) VALUES(%s,'rules_q1',0)", (version_id,))
+        assignment_id = conn.execute("INSERT INTO exam_assignments(exam_id,section_id,version_mode,fixed_version_id,is_active,created_at,updated_at) VALUES(%s,591,'fixed',%s,1,%s,%s) RETURNING id", (exam_id, version_id, stamp, stamp)).fetchone()["id"]
         original_language = app.setting(conn, 'ui_language')
         conn.execute("UPDATE app_settings SET value='en' WHERE key='ui_language'")
         version = app.setting(conn, 'rules_version')
@@ -743,7 +891,7 @@ def test_rules_acknowledgment_lifecycle_and_attempt_language_snapshot():
         sess['attempt_id'] = 'language-snapshot'
     _submission_attempt('language-snapshot', student_id=591)
     with app.get_db() as conn:
-        conn.execute("UPDATE attempts SET ui_language='en',policy_version=?,policy_accepted_at=?,policy_text='Rules' WHERE id='language-snapshot'", (version, app.now_iso()))
+        conn.execute("UPDATE attempts SET ui_language='en',policy_version=%s,policy_accepted_at=%s,policy_text='Rules' WHERE id='language-snapshot'", (version, app.now_iso()))
         conn.execute("UPDATE app_settings SET value='es' WHERE key='ui_language'")
         conn.commit()
     response = client.get('/exam')
@@ -752,14 +900,14 @@ def test_rules_acknowledgment_lifecycle_and_attempt_language_snapshot():
     with client.session_transaction() as sess:
         assert 'rules_acknowledged_version' not in sess
     with app.get_db() as conn:
-        conn.execute("UPDATE app_settings SET value=? WHERE key='ui_language'", (original_language,))
+        conn.execute("UPDATE app_settings SET value=%s WHERE key='ui_language'", (original_language,))
         conn.commit()
 
 
 def test_penalties_are_tenant_owned_auditable_revocable_and_raw_grade_is_unchanged():
     _, owner_id = _submission_attempt('penalty-attempt', student_id=995)
     with app.get_db() as conn:
-        conn.execute("UPDATE attempts SET status='submitted',submitted_at=?,score=8,total=10,percentage=80,grade10=8 WHERE id='penalty-attempt'", (app.now_iso(),))
+        conn.execute("UPDATE attempts SET status='submitted',submitted_at=%s,score=8,total=10,percentage=80,grade10=8 WHERE id='penalty-attempt'", (app.now_iso(),))
         conn.commit()
     client = app.app.test_client()
     with client.session_transaction() as sess:
@@ -779,17 +927,17 @@ def test_penalties_are_tenant_owned_auditable_revocable_and_raw_grade_is_unchang
     client.post(f"/teacher/results/penalty-attempt/penalties/{penalty['id']}/revoke", data={'csrf_token':'penalty-token'})
     with app.get_db() as conn:
         assert app.active_penalty_total(conn, 'penalty-attempt') == 0
-        assert conn.execute("SELECT is_active,revoked_at FROM attempt_penalties WHERE id=?", (penalty['id'],)).fetchone()['revoked_at']
+        assert conn.execute("SELECT is_active,revoked_at FROM attempt_penalties WHERE id=%s", (penalty['id'],)).fetchone()['revoked_at']
 
 
 def test_penalty_cap_cross_teacher_and_export_values():
     _, owner_id = _submission_attempt('penalty-cap', student_id=996)
     with app.get_db() as conn:
         stamp = app.now_iso()
-        conn.execute("""INSERT OR REPLACE INTO teachers(id,full_name,email,password_hash,role,is_active,must_change_password,created_at,updated_at)
-                        VALUES(881,'Other Export Teacher','other-export@example.com',?,'teacher',1,0,?,?)""",
+        conn.execute("""INSERT INTO teachers(id,full_name,email,password_hash,role,is_active,must_change_password,created_at,updated_at)
+                        VALUES(881,'Other Export Teacher','other-export@example.com',%s,'teacher',1,0,%s,%s)""",
                      (app.generate_password_hash('Teacher123'), stamp, stamp))
-        conn.execute("UPDATE attempts SET status='submitted',submitted_at=?,score=5,total=10,percentage=50,grade10=5 WHERE id='penalty-cap'", (app.now_iso(),))
+        conn.execute("UPDATE attempts SET status='submitted',submitted_at=%s,score=5,total=10,percentage=50,grade10=5 WHERE id='penalty-cap'", (app.now_iso(),))
         conn.commit()
     owner = app.app.test_client()
     with owner.session_transaction() as sess:
@@ -880,9 +1028,9 @@ def test_integrity_event_details_render_for_owner_teacher_only():
     _, owner_id = _submission_attempt('integrity-render', student_id=997)
     with app.get_db() as conn:
         stamp = app.now_iso()
-        conn.execute("UPDATE attempts SET status='submitted',submitted_at=?,score=1,total=1,percentage=100,grade10=10 WHERE id='integrity-render'", (stamp,))
+        conn.execute("UPDATE attempts SET status='submitted',submitted_at=%s,score=1,total=1,percentage=100,grade10=10 WHERE id='integrity-render'", (stamp,))
         conn.execute(
-            "INSERT INTO integrity_events(attempt_id,event_type,occurred_at,detail_json) VALUES('integrity-render','copy',?,?)",
+            "INSERT INTO integrity_events(attempt_id,event_type,occurred_at,detail_json) VALUES('integrity-render','copy',%s,%s)",
             (stamp, json.dumps({'question':'mc','secret':'teacher-only-raw'})),
         )
         conn.commit()

@@ -6,7 +6,6 @@ import os
 import random
 import re
 import secrets
-import sqlite3
 import unicodedata
 from datetime import datetime
 from functools import wraps
@@ -23,16 +22,30 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from psycopg import DatabaseError, Error as DatabaseConnectionError, IntegrityError
+from psycopg_pool import PoolTimeout
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
+from database import close_pool, connection as database_connection
 from policy_defaults import DEFAULT_RULES_VERSION, DEFAULT_STUDENT_RULES_EN, DEFAULT_STUDENT_RULES_ES
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-DB_PATH = os.getenv("DATABASE_PATH", os.path.join(DATA_DIR, "results.db"))
-AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
+AUDIO_DIR = os.getenv("AUDIO_DIR", os.path.join(BASE_DIR, "static", "audio"))
 ALLOWED_AUDIO_EXTENSIONS = {"wav", "mp3", "m4a", "ogg", "aac"}
+
+
+def env_bool(name, default):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be one of: 1/0, true/false, yes/no, on/off")
+
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-change-this-secret-key")
@@ -40,6 +53,13 @@ app.config["TEACHER_ADMIN_NAME"] = os.getenv("TEACHER_ADMIN_NAME", "Administrato
 app.config["TEACHER_ADMIN_EMAIL"] = os.getenv("TEACHER_ADMIN_EMAIL", "admin@assessment.local")
 app.config["TEACHER_ADMIN_PASSWORD"] = os.getenv("TEACHER_ADMIN_PASSWORD", "ChangeMe123")
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SECURE"] = env_bool("SESSION_COOKIE_SECURE", True)
+app.config["SESSION_COOKIE_SAMESITE"] = os.getenv("SESSION_COOKIE_SAMESITE", "Lax").strip().capitalize()
+if app.config["SESSION_COOKIE_SAMESITE"] not in {"Lax", "Strict", "None"}:
+    raise RuntimeError("SESSION_COOKIE_SAMESITE must be Lax, Strict, or None")
+if app.config["SESSION_COOKIE_SAMESITE"] == "None" and not app.config["SESSION_COOKIE_SECURE"]:
+    raise RuntimeError("SESSION_COOKIE_SAMESITE=None requires SESSION_COOKIE_SECURE=1")
 
 TYPE_LABELS = {
     "multiple_choice": "Multiple Choice",
@@ -574,10 +594,7 @@ def add_security_headers(response):
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    return database_connection()
 
 
 def now_iso():
@@ -585,7 +602,7 @@ def now_iso():
 
 
 def setting(conn, key):
-    row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    row = conn.execute("SELECT value FROM app_settings WHERE key = %s", (key,)).fetchone()
     return row["value"] if row else DEFAULT_SETTINGS.get(key, "")
 
 
@@ -637,15 +654,15 @@ def get_ui_language():
                 with get_db() as conn:
                     cols = table_columns(conn, "attempts")
                     if "ui_language" in cols:
-                        row = conn.execute("SELECT ui_language FROM attempts WHERE id=?", (attempt_id,)).fetchone()
+                        row = conn.execute("SELECT ui_language FROM attempts WHERE id=%s", (attempt_id,)).fetchone()
                         language = row["ui_language"] if row and row["ui_language"] else None
-            except sqlite3.Error:
+            except DatabaseConnectionError:
                 language = None
     if language not in SUPPORTED_UI_LANGUAGES:
         try:
             with get_db() as conn:
                 language = setting(conn, "ui_language")
-        except sqlite3.Error:
+        except DatabaseConnectionError:
             language = DEFAULT_SETTINGS.get("ui_language", "es")
     if language not in SUPPORTED_UI_LANGUAGES:
         language = "es"
@@ -734,8 +751,8 @@ def inject_ui_helpers():
     if session.get("teacher_authenticated") and session.get("teacher_id"):
         try:
             with get_db() as conn:
-                teacher = conn.execute("SELECT id,full_name,email,role FROM teachers WHERE id=? AND is_active=1", (session.get("teacher_id"),)).fetchone()
-        except sqlite3.Error:
+                teacher = conn.execute("SELECT id,full_name,email,role FROM teachers WHERE id=%s AND is_active=1", (session.get("teacher_id"),)).fetchone()
+        except DatabaseConnectionError:
             teacher = None
     return {
         "t": lambda text, **kwargs: tr(text, language=language, **kwargs),
@@ -773,436 +790,48 @@ def generate_temp_password(length=12):
 
 
 def table_columns(conn, table):
-    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    rows = conn.execute(
+        """SELECT column_name FROM information_schema.columns
+           WHERE table_schema=current_schema() AND table_name=%s""",
+        (table,),
+    ).fetchall()
+    return {row["column_name"] for row in rows}
 
 
-def init_db():
-    os.makedirs(os.path.dirname(DB_PATH) or DATA_DIR, exist_ok=True)
+def bootstrap_runtime_data():
+    """Create required runtime defaults after Alembic has migrated the schema."""
     os.makedirs(AUDIO_DIR, exist_ok=True)
     with get_db() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS attempts (
-                id TEXT PRIMARY KEY,
-                student_id INTEGER,
-                student_email TEXT,
-                student_name TEXT NOT NULL,
-                section TEXT NOT NULL,
-                started_at TEXT NOT NULL,
-                submitted_at TEXT,
-                seed INTEGER NOT NULL,
-                score REAL,
-                total REAL,
-                percentage REAL,
-                grade10 REAL,
-                category_scores TEXT,
-                type_scores TEXT,
-                answers_json TEXT,
-                status TEXT NOT NULL DEFAULT 'in_progress',
-                focus_departures INTEGER NOT NULL DEFAULT 0,
-                focus_returns INTEGER NOT NULL DEFAULT 0,
-                away_seconds REAL NOT NULL DEFAULT 0,
-                longest_away_seconds REAL NOT NULL DEFAULT 0,
-                blur_events INTEGER NOT NULL DEFAULT 0,
-                pagehide_events INTEGER NOT NULL DEFAULT 0,
-                context_menu_attempts INTEGER NOT NULL DEFAULT 0,
-                copy_attempts INTEGER NOT NULL DEFAULT 0,
-                cut_attempts INTEGER NOT NULL DEFAULT 0,
-                paste_attempts INTEGER NOT NULL DEFAULT 0,
-                shortcut_attempts INTEGER NOT NULL DEFAULT 0,
-                fullscreen_exits INTEGER NOT NULL DEFAULT 0,
-                last_security_event_at TEXT,
-                questions_json TEXT,
-                assessment_title TEXT,
-                assessment_subject TEXT,
-                category_labels_json TEXT,
-                ui_language TEXT
-            )
-            """
-        )
-        required_attempt_columns = {
-            "student_id": "INTEGER",
-            "student_email": "TEXT",
-            "category_scores": "TEXT",
-            "focus_departures": "INTEGER NOT NULL DEFAULT 0",
-            "focus_returns": "INTEGER NOT NULL DEFAULT 0",
-            "away_seconds": "REAL NOT NULL DEFAULT 0",
-            "longest_away_seconds": "REAL NOT NULL DEFAULT 0",
-            "blur_events": "INTEGER NOT NULL DEFAULT 0",
-            "pagehide_events": "INTEGER NOT NULL DEFAULT 0",
-            "context_menu_attempts": "INTEGER NOT NULL DEFAULT 0",
-            "copy_attempts": "INTEGER NOT NULL DEFAULT 0",
-            "cut_attempts": "INTEGER NOT NULL DEFAULT 0",
-            "paste_attempts": "INTEGER NOT NULL DEFAULT 0",
-            "shortcut_attempts": "INTEGER NOT NULL DEFAULT 0",
-            "fullscreen_exits": "INTEGER NOT NULL DEFAULT 0",
-            "last_security_event_at": "TEXT",
-            "questions_json": "TEXT",
-            "assessment_title": "TEXT",
-            "assessment_subject": "TEXT",
-            "category_labels_json": "TEXT",
-            "ui_language": "TEXT",
-            "exam_id": "INTEGER",
-            "exam_version_id": "INTEGER",
-            "assignment_id": "INTEGER",
-            "exam_version_name": "TEXT",
-            "teacher_id": "INTEGER",
-            "policy_version": "TEXT",
-            "policy_accepted_at": "TEXT",
-            "policy_text": "TEXT",
-        }
-        existing = table_columns(conn, "attempts")
-        for name, definition in required_attempt_columns.items():
-            if name not in existing:
-                conn.execute(f"ALTER TABLE attempts ADD COLUMN {name} {definition}")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS integrity_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                attempt_id TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                occurred_at TEXT NOT NULL,
-                detail_json TEXT,
-                FOREIGN KEY (attempt_id) REFERENCES attempts(id)
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_integrity_attempt ON integrity_events(attempt_id)")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS attempt_penalties (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                attempt_id TEXT NOT NULL,
-                teacher_id INTEGER NOT NULL,
-                points REAL NOT NULL CHECK(points > 0),
-                reason TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                revoked_at TEXT,
-                revoked_by INTEGER,
-                is_active INTEGER NOT NULL DEFAULT 1,
-                FOREIGN KEY (attempt_id) REFERENCES attempts(id),
-                FOREIGN KEY (teacher_id) REFERENCES teachers(id),
-                FOREIGN KEY (revoked_by) REFERENCES teachers(id)
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_attempt_penalties_active ON attempt_penalties(attempt_id,is_active)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_attempt_penalties_teacher ON attempt_penalties(teacher_id,created_at)")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS app_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-            """
-        )
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS teachers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                full_name TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'teacher',
-                is_active INTEGER NOT NULL DEFAULT 1,
-                must_change_password INTEGER NOT NULL DEFAULT 0,
-                last_login_at TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sections (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                description TEXT,
-                is_archived INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS students (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                full_name TEXT NOT NULL COLLATE NOCASE,
-                section_id INTEGER NOT NULL,
-                student_code TEXT UNIQUE,
-                email TEXT,
-                password_hash TEXT,
-                must_change_password INTEGER NOT NULL DEFAULT 1,
-                password_updated_at TEXT,
-                last_login_at TEXT,
-                notes TEXT,
-                is_active INTEGER NOT NULL DEFAULT 1,
-                is_archived INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(section_id, full_name),
-                FOREIGN KEY (section_id) REFERENCES sections(id)
-            )
-            """
-        )
-        student_cols = table_columns(conn, "students")
-        for name, definition in {
-            "email": "TEXT",
-            "password_hash": "TEXT",
-            "must_change_password": "INTEGER NOT NULL DEFAULT 1",
-            "password_updated_at": "TEXT",
-            "last_login_at": "TEXT",
-            "is_archived": "INTEGER NOT NULL DEFAULT 0",
-        }.items():
-            if name not in student_cols:
-                conn.execute(f"ALTER TABLE students ADD COLUMN {name} {definition}")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS subjects (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                description TEXT,
-                is_archived INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS categories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                subject_id INTEGER NOT NULL,
-                name TEXT NOT NULL COLLATE NOCASE,
-                description TEXT,
-                sort_order INTEGER NOT NULL DEFAULT 0,
-                is_archived INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(subject_id, name),
-                FOREIGN KEY (subject_id) REFERENCES subjects(id)
-            )
-            """
-        )
-
-        # New universal question bank. Legacy columns from earlier English versions may remain harmlessly if a DB is reused.
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS question_bank (
-                id TEXT PRIMARY KEY,
-                teacher_id INTEGER,
-                subject_id INTEGER,
-                category_id INTEGER,
-                type TEXT NOT NULL,
-                prompt TEXT NOT NULL,
-                data_json TEXT NOT NULL,
-                answer_json TEXT NOT NULL,
-                audio TEXT,
-                script TEXT,
-                is_active INTEGER NOT NULL DEFAULT 0,
-                is_archived INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY (teacher_id) REFERENCES teachers(id),
-                FOREIGN KEY (subject_id) REFERENCES subjects(id),
-                FOREIGN KEY (category_id) REFERENCES categories(id)
-            )
-            """
-        )
-        qcols = table_columns(conn, "question_bank")
-        for name, definition in {
-            "subject_id": "INTEGER",
-            "category_id": "INTEGER",
-        }.items():
-            if name not in qcols:
-                conn.execute(f"ALTER TABLE question_bank ADD COLUMN {name} {definition}")
-
-        if "teacher_id" not in table_columns(conn, "question_bank"):
-            conn.execute("ALTER TABLE question_bank ADD COLUMN teacher_id INTEGER")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS exams (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                teacher_id INTEGER,
-                subject_id INTEGER NOT NULL,
-                title TEXT NOT NULL,
-                description TEXT,
-                is_published INTEGER NOT NULL DEFAULT 0,
-                is_archived INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY (teacher_id) REFERENCES teachers(id),
-                FOREIGN KEY (subject_id) REFERENCES subjects(id)
-            )
-            """
-        )
-        if "teacher_id" not in table_columns(conn, "exams"):
-            conn.execute("ALTER TABLE exams ADD COLUMN teacher_id INTEGER")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS exam_versions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                exam_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                is_active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(exam_id, name),
-                FOREIGN KEY (exam_id) REFERENCES exams(id)
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS exam_version_questions (
-                version_id INTEGER NOT NULL,
-                question_id TEXT NOT NULL,
-                position INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY(version_id, question_id),
-                FOREIGN KEY (version_id) REFERENCES exam_versions(id) ON DELETE CASCADE,
-                FOREIGN KEY (question_id) REFERENCES question_bank(id)
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS exam_assignments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                exam_id INTEGER NOT NULL,
-                section_id INTEGER NOT NULL,
-                version_mode TEXT NOT NULL DEFAULT 'random',
-                fixed_version_id INTEGER,
-                is_active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(exam_id, section_id),
-                FOREIGN KEY (exam_id) REFERENCES exams(id),
-                FOREIGN KEY (section_id) REFERENCES sections(id),
-                FOREIGN KEY (fixed_version_id) REFERENCES exam_versions(id)
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS student_exam_allocations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                assignment_id INTEGER NOT NULL,
-                student_id INTEGER NOT NULL,
-                version_id INTEGER NOT NULL,
-                allocated_at TEXT NOT NULL,
-                UNIQUE(assignment_id, student_id),
-                FOREIGN KEY (assignment_id) REFERENCES exam_assignments(id),
-                FOREIGN KEY (student_id) REFERENCES students(id),
-                FOREIGN KEY (version_id) REFERENCES exam_versions(id)
-            )
-            """
-        )
-
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (724190315,))
         timestamp = now_iso()
-        # Bootstrap the first administrator for existing/single-teacher installations.
-        bootstrap_email = normalize_email(app.config["TEACHER_ADMIN_EMAIL"])
-        bootstrap_password = str(app.config["TEACHER_ADMIN_PASSWORD"] or "")
         bootstrap = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()
         if not bootstrap:
-            if not valid_email(bootstrap_email):
-                bootstrap_email = "admin@assessment.local"
-            if not valid_student_password(bootstrap_password):
-                bootstrap_password = "ChangeMe123"
-            cur = conn.execute(
-                """INSERT INTO teachers(full_name,email,password_hash,role,is_active,must_change_password,created_at,updated_at)
-                   VALUES(?,?,?,'admin',1,0,?,?)""",
-                (app.config["TEACHER_ADMIN_NAME"], bootstrap_email, generate_password_hash(bootstrap_password), timestamp, timestamp),
-            )
-            bootstrap_teacher_id = cur.lastrowid
-        else:
-            bootstrap_teacher_id = int(bootstrap["id"])
-        conn.execute("UPDATE question_bank SET teacher_id=? WHERE teacher_id IS NULL", (bootstrap_teacher_id,))
-        conn.execute("UPDATE exams SET teacher_id=? WHERE teacher_id IS NULL", (bootstrap_teacher_id,))
-        conn.execute("UPDATE attempts SET teacher_id=? WHERE teacher_id IS NULL", (bootstrap_teacher_id,))
-
-        conn.execute(
-            "INSERT OR IGNORE INTO subjects(id, name, description, created_at, updated_at) VALUES(1, ?, ?, ?, ?)",
-            ("General", "Default subject. Rename it from Subjects & Categories.", timestamp, timestamp),
-        )
-        conn.execute(
-            "INSERT OR IGNORE INTO categories(id, subject_id, name, description, sort_order, created_at, updated_at) VALUES(1, 1, ?, ?, 0, ?, ?)",
-            ("General", "Default category. Rename it or create additional categories.", timestamp, timestamp),
-        )
-
-        # Best-effort migration of a question bank created by the English-specific edition.
-        qcols = table_columns(conn, "question_bank")
-        if "unit" in qcols and "unit_label" in qcols:
-            legacy_count = conn.execute(
-                "SELECT COUNT(*) AS n FROM question_bank WHERE subject_id IS NULL OR category_id IS NULL"
-            ).fetchone()["n"]
-            if legacy_count:
-                conn.execute(
-                    "INSERT OR IGNORE INTO subjects(name, description, created_at, updated_at) VALUES(?, ?, ?, ?)",
-                    ("English", "Migrated from English Assessment Studio.", timestamp, timestamp),
-                )
-                english_id = conn.execute("SELECT id FROM subjects WHERE name = ? COLLATE NOCASE", ("English",)).fetchone()["id"]
-                legacy_units = conn.execute(
-                    "SELECT DISTINCT unit, unit_label FROM question_bank WHERE subject_id IS NULL OR category_id IS NULL ORDER BY unit"
-                ).fetchall()
-                for row in legacy_units:
-                    cat_name = row["unit_label"] or f"Unit {row['unit']}"
-                    conn.execute(
-                        "INSERT OR IGNORE INTO categories(subject_id, name, description, sort_order, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?)",
-                        (english_id, cat_name, "Migrated English category.", int(row["unit"] or 0), timestamp, timestamp),
-                    )
-                    cat_id = conn.execute(
-                        "SELECT id FROM categories WHERE subject_id=? AND name=? COLLATE NOCASE", (english_id, cat_name)
-                    ).fetchone()["id"]
-                    conn.execute(
-                        "UPDATE question_bank SET subject_id=?, category_id=? WHERE unit=? AND (subject_id IS NULL OR category_id IS NULL)",
-                        (english_id, cat_id, row["unit"]),
-                    )
-                conn.execute(
-                    "INSERT INTO app_settings(key,value) VALUES('current_subject_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                    (str(english_id),),
-                )
-
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_question_bank_active ON question_bank(subject_id, is_active, is_archived)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_question_bank_category ON question_bank(category_id, type)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_categories_subject ON categories(subject_id, is_archived, sort_order, name)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_students_section ON students(section_id, is_active, is_archived, full_name)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_students_name ON students(full_name COLLATE NOCASE)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_exams_subject ON exams(subject_id, is_published, is_archived)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_versions_exam ON exam_versions(exam_id, is_active)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_assignments_section ON exam_assignments(section_id, is_active)")
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_attempt_once_per_assignment ON attempts(student_id, assignment_id) WHERE assignment_id IS NOT NULL")
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_students_email_unique ON students(email COLLATE NOCASE) WHERE email IS NOT NULL AND TRIM(email) <> ''")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_question_bank_teacher ON question_bank(teacher_id, subject_id, is_archived)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_exams_teacher ON exams(teacher_id, is_published, is_archived)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_teacher ON attempts(teacher_id, status, submitted_at)")
-
-        # Preserve submitted summaries from the English-specific edition when its legacy columns exist.
-        attempt_cols = table_columns(conn, "attempts")
-        if "unit_scores" in attempt_cols and "unit_labels_json" in attempt_cols:
+            email = normalize_email(app.config["TEACHER_ADMIN_EMAIL"])
+            password = str(app.config["TEACHER_ADMIN_PASSWORD"] or "")
+            if not valid_email(email) or not valid_student_password(password):
+                raise RuntimeError("Valid TEACHER_ADMIN_EMAIL and TEACHER_ADMIN_PASSWORD are required for initial bootstrap")
             conn.execute(
-                """UPDATE attempts SET category_scores=COALESCE(category_scores, unit_scores),
-                   category_labels_json=COALESCE(category_labels_json, unit_labels_json),
-                   assessment_subject=COALESCE(assessment_subject, 'English')
-                   WHERE status='submitted'"""
+                """INSERT INTO teachers(full_name,email,password_hash,role,is_active,must_change_password,created_at,updated_at)
+                   VALUES(%s,%s,%s,'admin',1,0,%s,%s)""",
+                (app.config["TEACHER_ADMIN_NAME"], email, generate_password_hash(password), timestamp, timestamp),
             )
-
+        subject = conn.execute("SELECT id FROM subjects WHERE name=%s", ("General",)).fetchone()
+        if not subject:
+            subject = conn.execute(
+                """INSERT INTO subjects(name,description,is_archived,created_at,updated_at)
+                   VALUES(%s,%s,0,%s,%s) RETURNING id""",
+                ("General", "Default subject. Rename it from Subjects & Categories.", timestamp, timestamp),
+            ).fetchone()
+        conn.execute(
+            """INSERT INTO categories(subject_id,name,description,sort_order,is_archived,created_at,updated_at)
+               VALUES(%s,%s,%s,0,0,%s,%s) ON CONFLICT(subject_id,name) DO NOTHING""",
+            (subject["id"], "General", "Default category. Rename it or create additional categories.", timestamp, timestamp),
+        )
         for key, value in DEFAULT_SETTINGS.items():
-            conn.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)", (key, value))
-        conn.execute("UPDATE app_settings SET value='accounts' WHERE key='student_access_mode' AND value IN ('open','roster')")
-        conn.commit()
-
-
-init_db()
-
+            conn.execute(
+                "INSERT INTO app_settings(key,value) VALUES(%s,%s) ON CONFLICT(key) DO NOTHING",
+                (key, value),
+            )
 
 def current_teacher_id():
     try:
@@ -1217,11 +846,9 @@ def current_teacher(conn=None):
         return None
     owns = conn is None
     if owns:
-        conn = get_db()
-    row = conn.execute("SELECT * FROM teachers WHERE id=? AND is_active=1", (teacher_id,)).fetchone()
-    if owns:
-        conn.close()
-    return row
+        with get_db() as owned_conn:
+            return owned_conn.execute("SELECT * FROM teachers WHERE id=%s AND is_active=1", (teacher_id,)).fetchone()
+    return conn.execute("SELECT * FROM teachers WHERE id=%s AND is_active=1", (teacher_id,)).fetchone()
 
 
 def is_teacher_admin(conn=None):
@@ -1230,7 +857,7 @@ def is_teacher_admin(conn=None):
 
 
 def teacher_owned_question(conn, qid):
-    return conn.execute("SELECT * FROM question_bank WHERE id=? AND teacher_id=?", (qid, current_teacher_id())).fetchone()
+    return conn.execute("SELECT * FROM question_bank WHERE id=%s AND teacher_id=%s", (qid, current_teacher_id())).fetchone()
 
 
 def current_subject(conn):
@@ -1238,7 +865,7 @@ def current_subject(conn):
         subject_id = int(setting(conn, "current_subject_id") or 1)
     except ValueError:
         subject_id = 1
-    row = conn.execute("SELECT * FROM subjects WHERE id=? AND is_archived=0", (subject_id,)).fetchone()
+    row = conn.execute("SELECT * FROM subjects WHERE id=%s AND is_archived=0", (subject_id,)).fetchone()
     if row:
         return row
     row = conn.execute("SELECT * FROM subjects WHERE is_archived=0 ORDER BY name LIMIT 1").fetchone()
@@ -1299,17 +926,16 @@ def question_select_sql(extra_where=""):
 def active_questions(conn=None):
     owns = conn is None
     if owns:
-        conn = get_db()
+        with get_db() as owned_conn:
+            return active_questions(owned_conn)
     subject = current_subject(conn)
     if not subject:
         return []
     rows = conn.execute(
-        question_select_sql("AND q.subject_id=? AND q.is_active=1") + " ORDER BY c.sort_order, c.name, q.type, q.created_at, q.id",
+        question_select_sql("AND q.subject_id=%s AND q.is_active=1") + " ORDER BY c.sort_order, c.name, q.type, q.created_at, q.id",
         (subject["id"],),
     ).fetchall()
     questions = [row_to_question(row) for row in rows]
-    if owns:
-        conn.close()
     return questions
 
 
@@ -1608,11 +1234,11 @@ def merge_security_snapshot(conn, attempt_id, form):
         longest = max(0.0, min(float(form.get("security_longest_away_seconds", 0)), 86400.0))
     except (TypeError, ValueError):
         longest = 0.0
-    assignments = [f"{column} = MAX({column}, ?)" for column in values]
+    assignments = [f"{column} = GREATEST({column}, %s)" for column in values]
     params = list(values.values())
-    assignments += ["away_seconds = MAX(away_seconds, ?)", "longest_away_seconds = MAX(longest_away_seconds, ?)"]
+    assignments += ["away_seconds = GREATEST(away_seconds, %s)", "longest_away_seconds = GREATEST(longest_away_seconds, %s)"]
     params += [away, longest, attempt_id]
-    conn.execute(f"UPDATE attempts SET {', '.join(assignments)} WHERE id = ?", params)
+    conn.execute(f"UPDATE attempts SET {', '.join(assignments)} WHERE id = %s", params)
 
 
 def teacher_required(view):
@@ -1622,7 +1248,7 @@ def teacher_required(view):
         if not session.get("teacher_authenticated") or not teacher_id:
             return redirect(url_for("teacher"))
         with get_db() as conn:
-            row = conn.execute("SELECT id,full_name,email,role,is_active FROM teachers WHERE id=?", (teacher_id,)).fetchone()
+            row = conn.execute("SELECT id,full_name,email,role,is_active FROM teachers WHERE id=%s", (teacher_id,)).fetchone()
         if not row or not row["is_active"]:
             session.clear()
             return redirect(url_for("teacher"))
@@ -1782,7 +1408,7 @@ def validate_required_answers(form, questions):
 
 def active_penalty_total(conn, attempt_id):
     row = conn.execute(
-        "SELECT COALESCE(SUM(points),0) AS total FROM attempt_penalties WHERE attempt_id=? AND is_active=1",
+        "SELECT COALESCE(SUM(points),0) AS total FROM attempt_penalties WHERE attempt_id=%s AND is_active=1",
         (attempt_id,),
     ).fetchone()
     return round(float(row["total"] or 0), 2)
@@ -1797,7 +1423,7 @@ def penalties_for_attempt(conn, attempt_id):
         """SELECT p.*,t.full_name AS teacher_name,rv.full_name AS revoked_by_name
            FROM attempt_penalties p JOIN teachers t ON t.id=p.teacher_id
            LEFT JOIN teachers rv ON rv.id=p.revoked_by
-           WHERE p.attempt_id=? ORDER BY p.created_at DESC,p.id DESC""",
+           WHERE p.attempt_id=%s ORDER BY p.created_at DESC,p.id DESC""",
         (attempt_id,),
     ).fetchall()
 
@@ -1809,7 +1435,7 @@ def version_questions(conn, version_id):
            JOIN question_bank q ON q.id=evq.question_id
            JOIN subjects s ON s.id=q.subject_id
            JOIN categories c ON c.id=q.category_id
-           WHERE evq.version_id=?
+           WHERE evq.version_id=%s
            ORDER BY evq.position, q.created_at, q.id""",
         (version_id,),
     ).fetchall()
@@ -1820,7 +1446,7 @@ def student_exam_rows(conn, student_id):
     student = conn.execute(
         """SELECT st.*, sec.name AS section_name FROM students st
            JOIN sections sec ON sec.id=st.section_id
-           WHERE st.id=? AND st.is_active=1 AND st.is_archived=0 AND sec.is_archived=0""",
+           WHERE st.id=%s AND st.is_active=1 AND st.is_archived=0 AND sec.is_archived=0""",
         (student_id,),
     ).fetchone()
     if not student:
@@ -1832,17 +1458,17 @@ def student_exam_rows(conn, student_id):
                      AND EXISTS(SELECT 1 FROM exam_version_questions qx WHERE qx.version_id=v.id)) AS version_count,
                    a.id AS attempt_id, a.status AS attempt_status, a.grade10, a.percentage,
                    COALESCE((SELECT SUM(p.points) FROM attempt_penalties p WHERE p.attempt_id=a.id AND p.is_active=1),0) AS penalty_points,
-                   MAX(0,COALESCE(a.grade10,0)-COALESCE((SELECT SUM(p.points) FROM attempt_penalties p WHERE p.attempt_id=a.id AND p.is_active=1),0)) AS adjusted_grade10,
+                   GREATEST(0,COALESCE(a.grade10,0)-COALESCE((SELECT SUM(p.points) FROM attempt_penalties p WHERE p.attempt_id=a.id AND p.is_active=1),0)) AS adjusted_grade10,
                   av.name AS assigned_version_name
            FROM exam_assignments ea
            JOIN exams e ON e.id=ea.exam_id
            JOIN subjects s ON s.id=e.subject_id
            LEFT JOIN exam_versions ev ON ev.id=ea.fixed_version_id
-           LEFT JOIN attempts a ON a.assignment_id=ea.id AND a.student_id=?
+           LEFT JOIN attempts a ON a.assignment_id=ea.id AND a.student_id=%s
            LEFT JOIN exam_versions av ON av.id=a.exam_version_id
-           WHERE ea.section_id=? AND ea.is_active=1 AND e.is_archived=0
+           WHERE ea.section_id=%s AND ea.is_active=1 AND e.is_archived=0
              AND (e.is_published=1 OR a.id IS NOT NULL)
-           ORDER BY e.title COLLATE NOCASE, ea.id""",
+           ORDER BY e.title , ea.id""",
         (student_id, student["section_id"]),
     ).fetchall()
     return student, rows
@@ -1891,6 +1517,21 @@ def index():
     )
 
 
+@app.get("/health/live")
+def health_live():
+    return jsonify({"status": "ok"})
+
+
+@app.get("/health/ready")
+def health_ready():
+    try:
+        with get_db() as conn:
+            conn.execute("SELECT 1").fetchone()
+    except (DatabaseConnectionError, PoolTimeout):
+        return jsonify({"status": "unavailable"}), 503
+    return jsonify({"status": "ok"})
+
+
 @app.post("/start")
 def start():
     verify_csrf()
@@ -1903,13 +1544,13 @@ def start():
         student = conn.execute(
             """SELECT st.*, sec.name AS section_name
                FROM students st JOIN sections sec ON sec.id=st.section_id
-               WHERE st.email=? COLLATE NOCASE AND st.is_active=1 AND st.is_archived=0 AND sec.is_archived=0""",
+               WHERE st.email=%s  AND st.is_active=1 AND st.is_archived=0 AND sec.is_archived=0""",
             (email,),
         ).fetchone()
         if not student or not student["password_hash"] or not check_password_hash(student["password_hash"], password):
             flash_ui("Invalid email or password, or the account is inactive.", "error")
             return redirect(url_for("index"))
-        conn.execute("UPDATE students SET last_login_at=?,updated_at=? WHERE id=?", (now_iso(), now_iso(), student["id"]))
+        conn.execute("UPDATE students SET last_login_at=%s,updated_at=%s WHERE id=%s", (now_iso(), now_iso(), student["id"]))
         conn.commit()
         student_id = int(student["id"])
         must_change = bool(student["must_change_password"])
@@ -1961,7 +1602,7 @@ def acknowledge_student_rules():
 
 def choose_assignment_version(conn, assignment, student_id):
     existing = conn.execute(
-        "SELECT version_id FROM student_exam_allocations WHERE assignment_id=? AND student_id=?",
+        "SELECT version_id FROM student_exam_allocations WHERE assignment_id=%s AND student_id=%s",
         (assignment["id"], student_id),
     ).fetchone()
     if existing:
@@ -1969,7 +1610,7 @@ def choose_assignment_version(conn, assignment, student_id):
     if assignment["version_mode"] == "fixed":
         version_id = assignment["fixed_version_id"]
         valid = conn.execute(
-            """SELECT 1 FROM exam_versions v WHERE v.id=? AND v.exam_id=? AND v.is_active=1
+            """SELECT 1 FROM exam_versions v WHERE v.id=%s AND v.exam_id=%s AND v.is_active=1
                AND EXISTS(SELECT 1 FROM exam_version_questions q WHERE q.version_id=v.id)""",
             (version_id, assignment["exam_id"]),
         ).fetchone()
@@ -1979,8 +1620,8 @@ def choose_assignment_version(conn, assignment, student_id):
         candidate_rows = conn.execute(
             """SELECT v.id,
                       (SELECT COUNT(*) FROM student_exam_allocations sea
-                       WHERE sea.assignment_id=? AND sea.version_id=v.id) AS allocated_count
-               FROM exam_versions v WHERE v.exam_id=? AND v.is_active=1
+                       WHERE sea.assignment_id=%s AND sea.version_id=v.id) AS allocated_count
+               FROM exam_versions v WHERE v.exam_id=%s AND v.is_active=1
                  AND EXISTS(SELECT 1 FROM exam_version_questions q WHERE q.version_id=v.id)
                ORDER BY v.id""",
             (assignment["id"], assignment["exam_id"]),
@@ -1991,7 +1632,7 @@ def choose_assignment_version(conn, assignment, student_id):
         candidates = [int(r["id"]) for r in candidate_rows if int(r["allocated_count"] or 0) == minimum]
         version_id = secrets.choice(candidates)
     conn.execute(
-        "INSERT INTO student_exam_allocations(assignment_id,student_id,version_id,allocated_at) VALUES(?,?,?,?)",
+        "INSERT INTO student_exam_allocations(assignment_id,student_id,version_id,allocated_at) VALUES(%s,%s,%s,%s)",
         (assignment["id"], student_id, version_id, now_iso()),
     )
     return int(version_id)
@@ -2009,20 +1650,20 @@ def start_assigned_exam(assignment_id):
             return redirect(url_for("student_dashboard"))
         student = conn.execute(
             """SELECT st.*,sec.name AS section_name FROM students st JOIN sections sec ON sec.id=st.section_id
-               WHERE st.id=? AND st.is_active=1 AND st.is_archived=0 AND sec.is_archived=0""",
+               WHERE st.id=%s AND st.is_active=1 AND st.is_archived=0 AND sec.is_archived=0""",
             (student_id,),
         ).fetchone()
         assignment = conn.execute(
             """SELECT ea.*,e.title,e.description,e.subject_id,e.teacher_id,e.is_published,e.is_archived,s.name AS subject_name
                FROM exam_assignments ea JOIN exams e ON e.id=ea.exam_id JOIN subjects s ON s.id=e.subject_id
-               WHERE ea.id=? AND ea.section_id=? AND ea.is_active=1""",
+               WHERE ea.id=%s AND ea.section_id=%s AND ea.is_active=1 FOR UPDATE OF ea""",
             (assignment_id, student["section_id"] if student else -1),
         ).fetchone()
         if not student or not assignment or assignment["is_archived"] or not assignment["is_published"]:
             flash_ui("This exam is not available for your section.", "error")
             return redirect(url_for("student_dashboard"))
         previous = conn.execute(
-            "SELECT * FROM attempts WHERE student_id=? AND assignment_id=? ORDER BY started_at DESC LIMIT 1",
+            "SELECT * FROM attempts WHERE student_id=%s AND assignment_id=%s ORDER BY started_at DESC LIMIT 1",
             (student_id, assignment_id),
         ).fetchone()
         if previous:
@@ -2036,7 +1677,7 @@ def start_assigned_exam(assignment_id):
             conn.rollback()
             flash_ui("No valid exam version is available.", "error")
             return redirect(url_for("student_dashboard"))
-        version = conn.execute("SELECT * FROM exam_versions WHERE id=?", (version_id,)).fetchone()
+        version = conn.execute("SELECT * FROM exam_versions WHERE id=%s", (version_id,)).fetchone()
         questions = version_questions(conn, version_id)
         if not questions:
             conn.rollback()
@@ -2053,17 +1694,17 @@ def start_assigned_exam(assignment_id):
                    (id,student_id,student_email,student_name,section,started_at,seed,status,questions_json,
                      assessment_title,assessment_subject,category_labels_json,ui_language,exam_id,exam_version_id,assignment_id,exam_version_name,teacher_id,
                      policy_version,policy_accepted_at,policy_text)
-                   VALUES(?,?,?,?,?,?,?,'in_progress',?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,'in_progress',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (attempt_id, student["id"], student["email"], student["full_name"], student["section_name"], now_iso(), seed,
                  json.dumps(questions), assignment["title"], assignment["subject_name"], json.dumps(labels),
                   setting(conn, "ui_language") or "es", assignment["exam_id"], version_id, assignment_id, version["name"], assignment["teacher_id"],
                   rules["version"], accepted_at, rules["text"]),
             )
             conn.commit()
-        except sqlite3.IntegrityError:
+        except IntegrityError:
             conn.rollback()
             previous = conn.execute(
-                "SELECT * FROM attempts WHERE student_id=? AND assignment_id=? ORDER BY started_at DESC LIMIT 1",
+                "SELECT * FROM attempts WHERE student_id=%s AND assignment_id=%s ORDER BY started_at DESC LIMIT 1",
                 (student_id, assignment_id),
             ).fetchone()
             if not previous:
@@ -2081,7 +1722,7 @@ def student_change_password():
         return redirect(url_for("index"))
     with get_db() as conn:
         student = conn.execute(
-            """SELECT st.*,sec.name AS section_name FROM students st JOIN sections sec ON sec.id=st.section_id WHERE st.id=?""",
+            """SELECT st.*,sec.name AS section_name FROM students st JOIN sections sec ON sec.id=st.section_id WHERE st.id=%s""",
             (student_id,),
         ).fetchone()
     if not student:
@@ -2103,7 +1744,7 @@ def student_change_password():
         else:
             with get_db() as conn:
                 conn.execute(
-                    "UPDATE students SET password_hash=?,must_change_password=0,password_updated_at=?,updated_at=? WHERE id=?",
+                    "UPDATE students SET password_hash=%s,must_change_password=0,password_updated_at=%s,updated_at=%s WHERE id=%s",
                     (generate_password_hash(new_password), now_iso(), now_iso(), student_id),
                 )
                 conn.commit()
@@ -2129,7 +1770,7 @@ def exam():
         if not rules_acknowledged(conn):
             flash_ui("You must accept the current usage rules before starting or resuming an exam.", "error")
             return redirect(url_for("student_dashboard"))
-        attempt = conn.execute("SELECT * FROM attempts WHERE id=? AND student_id=?", (attempt_id, student_id)).fetchone()
+        attempt = conn.execute("SELECT * FROM attempts WHERE id=%s AND student_id=%s", (attempt_id, student_id)).fetchone()
         listening_max_plays = int(setting(conn, "listening_max_plays") or 2)
     if not attempt:
         session.clear()
@@ -2155,7 +1796,7 @@ def listening_script(question_id):
     if not attempt_id or not session.get("student_authenticated") or not student_id:
         return jsonify({"ok": False}), 403
     with get_db() as conn:
-        attempt = conn.execute("SELECT * FROM attempts WHERE id=? AND student_id=?", (attempt_id, student_id)).fetchone()
+        attempt = conn.execute("SELECT * FROM attempts WHERE id=%s AND student_id=%s", (attempt_id, student_id)).fetchone()
     if not attempt or attempt["status"] != "in_progress":
         return jsonify({"ok": False}), 403
     for q in attempt_questions(attempt):
@@ -2182,22 +1823,25 @@ def integrity_event():
     timestamp = now_iso()
     detail = {k: payload.get(k) for k in ("question", "client_time", "visibility", "duration_ms", "shortcut") if payload.get(k) is not None}
     with get_db() as conn:
-        attempt = conn.execute("SELECT status FROM attempts WHERE id=? AND student_id=?", (attempt_id, student_id)).fetchone()
+        attempt = conn.execute(
+            "SELECT status FROM attempts WHERE id=%s AND student_id=%s FOR UPDATE",
+            (attempt_id, student_id),
+        ).fetchone()
         if not attempt or attempt["status"] != "in_progress":
             return jsonify({"ok": False}), 409
         column = SECURITY_EVENT_COLUMNS[event_type]
-        conn.execute(f"UPDATE attempts SET {column}={column}+1, last_security_event_at=? WHERE id=?", (timestamp, attempt_id))
+        conn.execute(f"UPDATE attempts SET {column}={column}+1, last_security_event_at=%s WHERE id=%s", (timestamp, attempt_id))
         if event_type == "focus_return":
             try:
                 duration = max(0.0, min(float(payload.get("duration_ms", 0)) / 1000.0, 86400.0))
             except (TypeError, ValueError):
                 duration = 0.0
             conn.execute(
-                "UPDATE attempts SET away_seconds=away_seconds+?, longest_away_seconds=MAX(longest_away_seconds, ?) WHERE id=?",
+                "UPDATE attempts SET away_seconds=away_seconds+%s, longest_away_seconds=GREATEST(longest_away_seconds, %s) WHERE id=%s",
                 (duration, duration, attempt_id),
             )
         conn.execute(
-            "INSERT INTO integrity_events(attempt_id,event_type,occurred_at,detail_json) VALUES(?,?,?,?)",
+            "INSERT INTO integrity_events(attempt_id,event_type,occurred_at,detail_json) VALUES(%s,%s,%s,%s)",
             (attempt_id, event_type, timestamp, json.dumps(detail)),
         )
         conn.commit()
@@ -2212,7 +1856,10 @@ def submit_exam():
     if not attempt_id or not session.get("student_authenticated") or not student_id:
         abort(403)
     with get_db() as conn:
-        attempt = conn.execute("SELECT * FROM attempts WHERE id=? AND student_id=?", (attempt_id, student_id)).fetchone()
+        attempt = conn.execute(
+            "SELECT * FROM attempts WHERE id=%s AND student_id=%s FOR UPDATE",
+            (attempt_id, student_id),
+        ).fetchone()
         if not attempt:
             abort(403)
         if attempt["status"] != "in_progress":
@@ -2221,15 +1868,16 @@ def submit_exam():
         merge_security_snapshot(conn, attempt_id, request.form)
         invalid, draft = validate_required_answers(request.form, questions)
         if invalid:
-            conn.execute("UPDATE attempts SET answers_json=? WHERE id=?", (json.dumps(draft), attempt_id))
+            conn.execute("UPDATE attempts SET answers_json=%s WHERE id=%s", (json.dumps(draft), attempt_id))
             conn.commit()
             session["invalid_question"] = invalid[0]
             flash_ui("Answer every question with a valid response before submitting.", "error")
             return redirect(url_for("exam"))
         score, total, percentage, grade10, category_scores, type_scores, captured = score_attempt(request.form, questions)
         conn.execute(
-            """UPDATE attempts SET submitted_at=?, score=?, total=?, percentage=?, grade10=?,
-                category_scores=?, type_scores=?, answers_json=?, status='submitted' WHERE id=?""",
+            """UPDATE attempts SET submitted_at=%s, score=%s, total=%s, percentage=%s, grade10=%s,
+                category_scores=%s, type_scores=%s, answers_json=%s, status='submitted'
+                WHERE id=%s AND status='in_progress'""",
             (now_iso(), score, total, percentage, grade10, json.dumps(category_scores), json.dumps(type_scores), json.dumps(captured), attempt_id),
         )
         conn.commit()
@@ -2240,7 +1888,14 @@ def teacher_can_view_attempt(conn, attempt_id):
     teacher_id = current_teacher_id()
     if not teacher_id:
         return False
-    return bool(conn.execute("SELECT 1 FROM attempts WHERE id=? AND teacher_id=?", (attempt_id, teacher_id)).fetchone())
+    active_teacher = conn.execute(
+        "SELECT 1 FROM teachers WHERE id=%s AND is_active=1",
+        (teacher_id,),
+    ).fetchone()
+    if not active_teacher:
+        session.clear()
+        return False
+    return bool(conn.execute("SELECT 1 FROM attempts WHERE id=%s AND teacher_id=%s", (attempt_id, teacher_id)).fetchone())
 
 
 @app.get("/result/<attempt_id>")
@@ -2254,16 +1909,16 @@ def result(attempt_id):
         if not session.get("student_authenticated") or not session.get("student_id"):
             abort(403)
         with get_db() as _conn:
-            _owned = _conn.execute("SELECT 1 FROM attempts WHERE id=? AND student_id=?", (attempt_id, session.get("student_id"))).fetchone()
+            _owned = _conn.execute("SELECT 1 FROM attempts WHERE id=%s AND student_id=%s", (attempt_id, session.get("student_id"))).fetchone()
         if not _owned:
             abort(403)
     with get_db() as conn:
-        attempt = conn.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone()
+        attempt = conn.execute("SELECT * FROM attempts WHERE id = %s", (attempt_id,)).fetchone()
         institution = setting(conn, "institution_name")
         penalty_total = active_penalty_total(conn, attempt_id) if attempt else 0
         penalties = penalties_for_attempt(conn, attempt_id) if attempt else []
         integrity_events = conn.execute(
-            "SELECT * FROM integrity_events WHERE attempt_id=? ORDER BY occurred_at,id", (attempt_id,)
+            "SELECT * FROM integrity_events WHERE attempt_id=%s ORDER BY occurred_at,id", (attempt_id,)
         ).fetchall() if teacher_view else []
     if not attempt or attempt["status"] != "submitted":
         abort(404)
@@ -2290,7 +1945,7 @@ def add_attempt_penalty(attempt_id):
         points = 0
     with get_db() as conn:
         attempt = conn.execute(
-            "SELECT * FROM attempts WHERE id=? AND teacher_id=? AND status='submitted'",
+            "SELECT * FROM attempts WHERE id=%s AND teacher_id=%s AND status='submitted' FOR UPDATE",
             (attempt_id, current_teacher_id()),
         ).fetchone()
         if not attempt:
@@ -2303,7 +1958,7 @@ def add_attempt_penalty(attempt_id):
         else:
             conn.execute(
                 """INSERT INTO attempt_penalties(attempt_id,teacher_id,points,reason,created_at,is_active)
-                   VALUES(?,?,?,?,?,1)""",
+                   VALUES(%s,%s,%s,%s,%s,1)""",
                 (attempt_id, current_teacher_id(), points, reason, now_iso()),
             )
             conn.commit()
@@ -2318,13 +1973,13 @@ def revoke_attempt_penalty(attempt_id, penalty_id):
     with get_db() as conn:
         penalty = conn.execute(
             """SELECT p.id FROM attempt_penalties p JOIN attempts a ON a.id=p.attempt_id
-               WHERE p.id=? AND p.attempt_id=? AND p.teacher_id=? AND a.teacher_id=? AND p.is_active=1""",
+               WHERE p.id=%s AND p.attempt_id=%s AND p.teacher_id=%s AND a.teacher_id=%s AND p.is_active=1""",
             (penalty_id, attempt_id, current_teacher_id(), current_teacher_id()),
         ).fetchone()
         if not penalty:
             abort(404)
         conn.execute(
-            "UPDATE attempt_penalties SET is_active=0,revoked_at=?,revoked_by=? WHERE id=?",
+            "UPDATE attempt_penalties SET is_active=0,revoked_at=%s,revoked_by=%s WHERE id=%s",
             (now_iso(), current_teacher_id(), penalty_id),
         )
         conn.commit()
@@ -2342,11 +1997,11 @@ def report_pdf(attempt_id):
         if not session.get("student_authenticated") or not session.get("student_id"):
             abort(403)
         with get_db() as _conn:
-            _owned = _conn.execute("SELECT 1 FROM attempts WHERE id=? AND student_id=?", (attempt_id, session.get("student_id"))).fetchone()
+            _owned = _conn.execute("SELECT 1 FROM attempts WHERE id=%s AND student_id=%s", (attempt_id, session.get("student_id"))).fetchone()
         if not _owned:
             abort(403)
     with get_db() as conn:
-        attempt = conn.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone()
+        attempt = conn.execute("SELECT * FROM attempts WHERE id = %s", (attempt_id,)).fetchone()
         institution = setting(conn, "institution_name")
         penalty_total = active_penalty_total(conn, attempt_id) if attempt else 0
         penalties = [penalty for penalty in penalties_for_attempt(conn, attempt_id) if penalty["is_active"]] if attempt else []
@@ -2439,29 +2094,29 @@ def submitted_where(filters):
     params = []
     teacher_id = current_teacher_id()
     if teacher_id:
-        where.append("teacher_id=?")
+        where.append("teacher_id=%s")
         params.append(teacher_id)
     if filters.get("q"):
         like = f"%{filters['q']}%"
-        where.append("(student_name LIKE ? OR COALESCE(student_email,'') LIKE ?)")
+        where.append("(student_name ILIKE %s OR COALESCE(student_email,'') ILIKE %s)")
         params.extend([like, like])
     if filters.get("section"):
-        where.append("section=?")
+        where.append("section=%s")
         params.append(filters["section"])
     if filters.get("subject"):
-        where.append("COALESCE(assessment_subject,'')=?")
+        where.append("COALESCE(assessment_subject,'')=%s")
         params.append(filters["subject"])
     if filters.get("assessment"):
-        where.append("COALESCE(assessment_title,'')=?")
+        where.append("COALESCE(assessment_title,'')=%s")
         params.append(filters["assessment"])
     if filters.get("version"):
-        where.append("COALESCE(exam_version_name,'')=?")
+        where.append("COALESCE(exam_version_name,'')=%s")
         params.append(filters["version"])
     if filters.get("date_from"):
-        where.append("substr(submitted_at,1,10)>=?")
+        where.append("substr(submitted_at,1,10)>=%s")
         params.append(filters["date_from"])
     if filters.get("date_to"):
-        where.append("substr(submitted_at,1,10)<=?")
+        where.append("substr(submitted_at,1,10)<=%s")
         params.append(filters["date_to"])
     integrity = filters.get("integrity")
     incident_expr = "(COALESCE(focus_departures,0)+COALESCE(blur_events,0)+COALESCE(context_menu_attempts,0)+COALESCE(copy_attempts,0)+COALESCE(cut_attempts,0)+COALESCE(paste_attempts,0)+COALESCE(shortcut_attempts,0)+COALESCE(fullscreen_exits,0))"
@@ -2480,7 +2135,7 @@ def fetch_submitted_rows(filters=None, order="ASC"):
         return conn.execute(
             f"""SELECT attempts.*,
                 COALESCE((SELECT SUM(p.points) FROM attempt_penalties p WHERE p.attempt_id=attempts.id AND p.is_active=1),0) AS penalty_points,
-                MAX(0,COALESCE(grade10,0)-COALESCE((SELECT SUM(p.points) FROM attempt_penalties p WHERE p.attempt_id=attempts.id AND p.is_active=1),0)) AS adjusted_grade10
+                GREATEST(0,COALESCE(grade10,0)-COALESCE((SELECT SUM(p.points) FROM attempt_penalties p WHERE p.attempt_id=attempts.id AND p.is_active=1),0)) AS adjusted_grade10
                 FROM attempts WHERE {' AND '.join(where)} ORDER BY submitted_at {direction}""", params
         ).fetchall()
 
@@ -2490,13 +2145,13 @@ def result_filter_options(conn):
     where = "status='submitted'"
     params = []
     if teacher_id:
-        where += " AND teacher_id=?"
+        where += " AND teacher_id=%s"
         params.append(teacher_id)
     return {
-        "sections": [r["section"] for r in conn.execute(f"SELECT DISTINCT section FROM attempts WHERE {where} AND TRIM(section)<>'' ORDER BY section COLLATE NOCASE", params).fetchall()],
-        "subjects": [r["assessment_subject"] for r in conn.execute(f"SELECT DISTINCT assessment_subject FROM attempts WHERE {where} AND COALESCE(TRIM(assessment_subject),'')<>'' ORDER BY assessment_subject COLLATE NOCASE", params).fetchall()],
-        "assessments": [r["assessment_title"] for r in conn.execute(f"SELECT DISTINCT assessment_title FROM attempts WHERE {where} AND COALESCE(TRIM(assessment_title),'')<>'' ORDER BY assessment_title COLLATE NOCASE", params).fetchall()],
-        "versions": [r["exam_version_name"] for r in conn.execute(f"SELECT DISTINCT exam_version_name FROM attempts WHERE {where} AND COALESCE(TRIM(exam_version_name),'')<>'' ORDER BY exam_version_name COLLATE NOCASE", params).fetchall()],
+        "sections": [r["section"] for r in conn.execute(f"SELECT DISTINCT section FROM attempts WHERE {where} AND TRIM(section)<>'' ORDER BY section ", params).fetchall()],
+        "subjects": [r["assessment_subject"] for r in conn.execute(f"SELECT DISTINCT assessment_subject FROM attempts WHERE {where} AND COALESCE(TRIM(assessment_subject),'')<>'' ORDER BY assessment_subject ", params).fetchall()],
+        "assessments": [r["assessment_title"] for r in conn.execute(f"SELECT DISTINCT assessment_title FROM attempts WHERE {where} AND COALESCE(TRIM(assessment_title),'')<>'' ORDER BY assessment_title ", params).fetchall()],
+        "versions": [r["exam_version_name"] for r in conn.execute(f"SELECT DISTINCT exam_version_name FROM attempts WHERE {where} AND COALESCE(TRIM(exam_version_name),'')<>'' ORDER BY exam_version_name ", params).fetchall()],
     }
 
 
@@ -2505,7 +2160,7 @@ def teacher_dashboard_stats(conn, teacher_id, visible_rows):
     summary = conn.execute(
         f"""SELECT COUNT(*) AS submitted,
                    COALESCE(AVG(percentage),0) AS average_percentage,
-                   COALESCE(AVG(MAX(0,COALESCE(grade10,0)-COALESCE((SELECT SUM(p.points) FROM attempt_penalties p WHERE p.attempt_id=attempts.id AND p.is_active=1),0))),0) AS average_grade,
+                   COALESCE(AVG(GREATEST(0,COALESCE(grade10,0)-COALESCE((SELECT SUM(p.points) FROM attempt_penalties p WHERE p.attempt_id=attempts.id AND p.is_active=1),0))),0) AS average_grade,
                    COALESCE(SUM(CASE WHEN {incident_expr}=0 THEN 1 ELSE 0 END),0) AS clean_count,
                    COALESCE(SUM(CASE WHEN {incident_expr}>0 THEN 1 ELSE 0 END),0) AS review_count,
                    COALESCE(SUM(COALESCE(focus_departures,0)+COALESCE(blur_events,0)),0) AS focus_total,
@@ -2513,16 +2168,16 @@ def teacher_dashboard_stats(conn, teacher_id, visible_rows):
                    COALESCE(SUM(CASE WHEN percentage < 60 THEN 1 ELSE 0 END),0) AS band_needs_support,
                    COALESCE(SUM(CASE WHEN percentage >= 60 AND percentage < 80 THEN 1 ELSE 0 END),0) AS band_developing,
                    COALESCE(SUM(CASE WHEN percentage >= 80 THEN 1 ELSE 0 END),0) AS band_strong
-            FROM attempts WHERE teacher_id=? AND status='submitted'""",
+            FROM attempts WHERE teacher_id=%s AND status='submitted'""",
         (teacher_id,),
     ).fetchone()
     stats = dict(summary)
     stats["clean_rate"] = stats["clean_count"] / stats["submitted"] * 100 if stats["submitted"] else 0.0
     stats["active_exams"] = conn.execute(
-        "SELECT COUNT(*) AS n FROM exams WHERE teacher_id=? AND is_published=1 AND is_archived=0", (teacher_id,)
+        "SELECT COUNT(*) AS n FROM exams WHERE teacher_id=%s AND is_published=1 AND is_archived=0", (teacher_id,)
     ).fetchone()["n"]
     stats["question_bank"] = conn.execute(
-        "SELECT COUNT(*) AS n FROM question_bank WHERE teacher_id=? AND is_archived=0", (teacher_id,)
+        "SELECT COUNT(*) AS n FROM question_bank WHERE teacher_id=%s AND is_archived=0", (teacher_id,)
     ).fetchone()["n"]
     stats["roster"] = conn.execute(
         "SELECT COUNT(*) AS n FROM students WHERE is_active=1 AND COALESCE(is_archived,0)=0"
@@ -2553,10 +2208,10 @@ def teacher():
         email = normalize_email(request.form.get("email"))
         password = request.form.get("password", "")
         with get_db() as conn:
-            account = conn.execute("SELECT * FROM teachers WHERE email=? COLLATE NOCASE", (email,)).fetchone()
+            account = conn.execute("SELECT * FROM teachers WHERE email=%s ", (email,)).fetchone()
             valid = bool(account and account["is_active"] and check_password_hash(account["password_hash"], password))
             if valid:
-                conn.execute("UPDATE teachers SET last_login_at=?,updated_at=? WHERE id=?", (now_iso(), now_iso(), account["id"]))
+                conn.execute("UPDATE teachers SET last_login_at=%s,updated_at=%s WHERE id=%s", (now_iso(), now_iso(), account["id"]))
                 conn.commit()
         if valid:
             session.clear()
@@ -2573,7 +2228,7 @@ def teacher():
     rows = fetch_submitted_rows(filters, order="DESC")
     teacher_id = current_teacher_id()
     with get_db() as conn:
-        teacher_user = conn.execute("SELECT * FROM teachers WHERE id=? AND is_active=1", (teacher_id,)).fetchone()
+        teacher_user = conn.execute("SELECT * FROM teachers WHERE id=%s AND is_active=1", (teacher_id,)).fetchone()
         if not teacher_user:
             session.clear()
             return redirect(url_for("teacher"))
@@ -2679,12 +2334,12 @@ def render_teacher_students(credentials=None, bulk_credentials=None, import_summ
     where = ["sec.is_archived=0", "COALESCE(st.is_archived,0)=0"]
     params = []
     if query:
-        where.append("(st.full_name LIKE ? OR COALESCE(st.student_code,'') LIKE ? OR COALESCE(st.email,'') LIKE ?)")
+        where.append("(st.full_name ILIKE %s OR COALESCE(st.student_code,'') ILIKE %s OR COALESCE(st.email::text,'') ILIKE %s)")
         like = f"%{query}%"
         params.extend([like, like, like])
     if section_filter:
         try:
-            where.append("st.section_id=?")
+            where.append("st.section_id=%s")
             params.append(int(section_filter))
         except ValueError:
             pass
@@ -2772,7 +2427,7 @@ def teacher_students_import():
     imported = 0
     skipped = []
     with get_db() as conn:
-        section = conn.execute("SELECT id,name FROM sections WHERE id=? AND is_archived=0", (section_id,)).fetchone()
+        section = conn.execute("SELECT id,name FROM sections WHERE id=%s AND is_archived=0", (section_id,)).fetchone()
         if not section:
             flash_ui("Select a valid section for the import.", "error")
             return redirect(url_for("teacher_students"))
@@ -2794,20 +2449,21 @@ def teacher_students_import():
                 skipped.append(f"Fila {idx}: correo inválido para NIE {nie}" if get_ui_language() == "es" else f"Row {idx}: invalid email for NIE {nie}")
                 continue
             duplicate = conn.execute(
-                "SELECT id FROM students WHERE COALESCE(is_archived,0)=0 AND (student_code=? OR email=? COLLATE NOCASE)",
+                "SELECT id FROM students WHERE COALESCE(is_archived,0)=0 AND (student_code=%s OR email=%s )",
                 (nie, email),
             ).fetchone()
             if duplicate:
                 skipped.append(f"Fila {idx}: NIE o correo ya registrado ({nie})" if get_ui_language() == "es" else f"Row {idx}: NIE or email already registered ({nie})")
                 continue
             try:
-                conn.execute(
-                    """INSERT INTO students(full_name,section_id,student_code,email,password_hash,must_change_password,password_updated_at,notes,is_active,is_archived,created_at,updated_at)
-                       VALUES(?,?,?,?,?,?,?,?,1,0,?,?)""",
-                    (full_name, section_id, nie, email, generate_password_hash(batch_password), must_change, stamp, None, stamp, stamp),
-                )
+                with conn.transaction():
+                    conn.execute(
+                        """INSERT INTO students(full_name,section_id,student_code,email,password_hash,must_change_password,password_updated_at,notes,is_active,is_archived,created_at,updated_at)
+                           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,1,0,%s,%s)""",
+                        (full_name, section_id, nie, email, generate_password_hash(batch_password), must_change, stamp, None, stamp, stamp),
+                    )
                 imported += 1
-            except sqlite3.IntegrityError:
+            except IntegrityError:
                 skipped.append(f"Fila {idx}: conflicto de datos ({nie})" if get_ui_language() == "es" else f"Row {idx}: data conflict ({nie})")
         conn.commit()
     summary = {"imported": imported, "skipped": len(skipped), "errors": skipped[:8]}
@@ -2833,12 +2489,12 @@ def teacher_section_new():
         with get_db() as conn:
             stamp = now_iso()
             conn.execute(
-                "INSERT INTO sections(name,description,is_archived,created_at,updated_at) VALUES(?,?,0,?,?)",
+                "INSERT INTO sections(name,description,is_archived,created_at,updated_at) VALUES(%s,%s,0,%s,%s)",
                 (name, description, stamp, stamp),
             )
             conn.commit()
         flash_ui("Section created.", "success")
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         flash_ui("That section already exists.", "error")
     return redirect(url_for("teacher_students"))
 
@@ -2855,12 +2511,12 @@ def teacher_section_edit(section_id):
     try:
         with get_db() as conn:
             conn.execute(
-                "UPDATE sections SET name=?,description=?,updated_at=? WHERE id=? AND is_archived=0",
+                "UPDATE sections SET name=%s,description=%s,updated_at=%s WHERE id=%s AND is_archived=0",
                 (name, description, now_iso(), section_id),
             )
             conn.commit()
         flash_ui("Section updated.", "success")
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         flash_ui("Another section already uses that name.", "error")
     return redirect(url_for("teacher_students"))
 
@@ -2870,16 +2526,16 @@ def teacher_section_edit(section_id):
 def teacher_section_archive(section_id):
     verify_csrf()
     with get_db() as conn:
-        section = conn.execute("SELECT * FROM sections WHERE id=? AND is_archived=0", (section_id,)).fetchone()
+        section = conn.execute("SELECT * FROM sections WHERE id=%s AND is_archived=0", (section_id,)).fetchone()
         if not section:
             abort(404)
         students_in_section = conn.execute(
-            "SELECT COUNT(*) AS n FROM students WHERE section_id=? AND COALESCE(is_archived,0)=0", (section_id,)
+            "SELECT COUNT(*) AS n FROM students WHERE section_id=%s AND COALESCE(is_archived,0)=0", (section_id,)
         ).fetchone()["n"]
         if students_in_section:
             flash_ui("Move or archive the students in this section before archiving it.", "error")
             return redirect(url_for("teacher_students"))
-        conn.execute("UPDATE sections SET is_archived=1,updated_at=? WHERE id=?", (now_iso(), section_id))
+        conn.execute("UPDATE sections SET is_archived=1,updated_at=%s WHERE id=%s", (now_iso(), section_id))
         conn.commit()
     flash_ui("Section archived.", "success")
     return redirect(url_for("teacher_students"))
@@ -2917,24 +2573,24 @@ def teacher_student_new():
         return redirect(url_for("teacher_students"))
     try:
         with get_db() as conn:
-            valid = conn.execute("SELECT 1 FROM sections WHERE id=? AND is_archived=0", (section_id,)).fetchone()
+            valid = conn.execute("SELECT 1 FROM sections WHERE id=%s AND is_archived=0", (section_id,)).fetchone()
             if not valid:
                 flash_ui("Select a valid section.", "error")
                 return redirect(url_for("teacher_students"))
-            if conn.execute("SELECT 1 FROM students WHERE email=? COLLATE NOCASE", (email,)).fetchone():
+            if conn.execute("SELECT 1 FROM students WHERE email=%s ", (email,)).fetchone():
                 flash_ui("That email address is already assigned to another student.", "error")
                 return redirect(url_for("teacher_students"))
             stamp = now_iso()
             conn.execute(
                 """INSERT INTO students(full_name,section_id,student_code,email,password_hash,must_change_password,password_updated_at,notes,is_active,created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,1,?,?)""",
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s)""",
                 (full_name, section_id, code, email, generate_password_hash(password), must_change, stamp, notes, stamp, stamp),
             )
             conn.commit()
         credentials = {"name": full_name, "email": email, "password": password}
         flash_ui("Student added. Temporary credentials are shown below.", "success")
         return render_teacher_students(credentials=credentials)
-    except sqlite3.IntegrityError as exc:
+    except IntegrityError as exc:
         if "email" in str(exc).lower():
             flash_ui("That email address is already assigned to another student.", "error")
         else:
@@ -2963,22 +2619,22 @@ def teacher_student_edit(student_id):
         return redirect(url_for("teacher_students"))
     try:
         with get_db() as conn:
-            valid = conn.execute("SELECT 1 FROM sections WHERE id=? AND is_archived=0", (section_id,)).fetchone()
+            valid = conn.execute("SELECT 1 FROM sections WHERE id=%s AND is_archived=0", (section_id,)).fetchone()
             if not valid:
                 flash_ui("Select a valid section.", "error")
                 return redirect(url_for("teacher_students"))
-            duplicate_email = conn.execute("SELECT id FROM students WHERE email=? COLLATE NOCASE AND id<>?", (email, student_id)).fetchone()
+            duplicate_email = conn.execute("SELECT id FROM students WHERE email=%s  AND id<>%s", (email, student_id)).fetchone()
             if duplicate_email:
                 flash_ui("That email address is already assigned to another student.", "error")
                 return redirect(url_for("teacher_students"))
             conn.execute(
-                """UPDATE students SET full_name=?,section_id=?,student_code=?,email=?,notes=?,is_active=?,updated_at=?
-                   WHERE id=?""",
+                """UPDATE students SET full_name=%s,section_id=%s,student_code=%s,email=%s,notes=%s,is_active=%s,updated_at=%s
+                   WHERE id=%s""",
                 (full_name, section_id, code, email, notes, is_active, now_iso(), student_id),
             )
             conn.commit()
         flash_ui("Student account updated.", "success")
-    except sqlite3.IntegrityError as exc:
+    except IntegrityError as exc:
         if "email" in str(exc).lower():
             flash_ui("That email address is already assigned to another student.", "error")
         else:
@@ -3003,14 +2659,14 @@ def teacher_student_password(student_id):
         flash_ui("Choose an initial password method.", "error")
         return redirect(url_for("teacher_students"))
     with get_db() as conn:
-        student = conn.execute("SELECT id,full_name,email FROM students WHERE id=?", (student_id,)).fetchone()
+        student = conn.execute("SELECT id,full_name,email FROM students WHERE id=%s", (student_id,)).fetchone()
         if not student:
             abort(404)
         if not student["email"]:
             flash_ui("A valid student email is required.", "error")
             return redirect(url_for("teacher_students"))
         conn.execute(
-            "UPDATE students SET password_hash=?,must_change_password=?,password_updated_at=?,updated_at=? WHERE id=?",
+            "UPDATE students SET password_hash=%s,must_change_password=%s,password_updated_at=%s,updated_at=%s WHERE id=%s",
             (generate_password_hash(password), must_change, now_iso(), now_iso(), student_id),
         )
         conn.commit()
@@ -3024,11 +2680,11 @@ def teacher_student_password(student_id):
 def teacher_student_toggle(student_id):
     verify_csrf()
     with get_db() as conn:
-        row = conn.execute("SELECT is_active FROM students WHERE id=?", (student_id,)).fetchone()
+        row = conn.execute("SELECT is_active FROM students WHERE id=%s", (student_id,)).fetchone()
         if not row:
             abort(404)
         new_value = 0 if row["is_active"] else 1
-        conn.execute("UPDATE students SET is_active=?,updated_at=? WHERE id=?", (new_value, now_iso(), student_id))
+        conn.execute("UPDATE students SET is_active=%s,updated_at=%s WHERE id=%s", (new_value, now_iso(), student_id))
         conn.commit()
     flash_ui("Student status updated.", "success")
     return redirect(url_for("teacher_students"))
@@ -3039,11 +2695,11 @@ def teacher_student_toggle(student_id):
 def teacher_student_archive(student_id):
     verify_csrf()
     with get_db() as conn:
-        row = conn.execute("SELECT id FROM students WHERE id=? AND COALESCE(is_archived,0)=0", (student_id,)).fetchone()
+        row = conn.execute("SELECT id FROM students WHERE id=%s AND COALESCE(is_archived,0)=0", (student_id,)).fetchone()
         if not row:
             abort(404)
         conn.execute(
-            "UPDATE students SET is_active=0,is_archived=1,updated_at=? WHERE id=?",
+            "UPDATE students SET is_active=0,is_archived=1,updated_at=%s WHERE id=%s",
             (now_iso(), student_id),
         )
         conn.commit()
@@ -3056,12 +2712,12 @@ def insert_question_row(conn, qid, values, is_active, prompt_override=None):
     columns = table_columns(conn, "question_bank")
     prompt = prompt_override if prompt_override is not None else values["prompt"]
     if "unit" in columns and "unit_label" in columns:
-        category = conn.execute("SELECT name FROM categories WHERE id=?", (values["category_id"],)).fetchone()
+        category = conn.execute("SELECT name FROM categories WHERE id=%s", (values["category_id"],)).fetchone()
         unit_label = category["name"] if category else "Category"
         conn.execute(
             """INSERT INTO question_bank
             (id,unit,unit_label,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,audio,script,is_active,is_archived,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s)""",
             (qid, values["category_id"], unit_label, current_teacher_id(), values["subject_id"], values["category_id"], values["type"], prompt,
              values["data_json"], values["answer_json"], values["audio"], values["script"], is_active, timestamp, timestamp),
         )
@@ -3069,7 +2725,7 @@ def insert_question_row(conn, qid, values, is_active, prompt_override=None):
         conn.execute(
             """INSERT INTO question_bank
             (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,audio,script,is_active,is_archived,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s)""",
             (qid, current_teacher_id(), values["subject_id"], values["category_id"], values["type"], prompt, values["data_json"],
              values["answer_json"], values["audio"], values["script"], is_active, timestamp, timestamp),
         )
@@ -3087,7 +2743,7 @@ def normalize_question_form(existing=None):
     with get_db() as conn:
         category = conn.execute(
             """SELECT c.id, c.subject_id FROM categories c JOIN subjects s ON s.id=c.subject_id
-               WHERE c.id=? AND c.subject_id=? AND c.is_archived=0 AND s.is_archived=0""",
+               WHERE c.id=%s AND c.subject_id=%s AND c.is_archived=0 AND s.is_archived=0""",
             (category_id, subject_id),
         ).fetchone()
     if not category:
@@ -3235,19 +2891,19 @@ def teacher_questions():
     subject_filter = request.args.get("subject", "").strip()
     category_filter = request.args.get("category", "").strip()
     status_filter = "all"
-    clauses = ["q.is_archived=0", "s.is_archived=0", "c.is_archived=0", "q.teacher_id=?"]
+    clauses = ["q.is_archived=0", "s.is_archived=0", "c.is_archived=0", "q.teacher_id=%s"]
     params = [current_teacher_id()]
     if search:
-        clauses.append("(q.prompt LIKE ? OR s.name LIKE ? OR c.name LIKE ?)")
+        clauses.append("(q.prompt ILIKE %s OR s.name ILIKE %s OR c.name ILIKE %s)")
         params += [f"%{search}%", f"%{search}%", f"%{search}%"]
     if type_filter in TYPE_LABELS:
-        clauses.append("q.type=?")
+        clauses.append("q.type=%s")
         params.append(type_filter)
     if subject_filter.isdigit():
-        clauses.append("q.subject_id=?")
+        clauses.append("q.subject_id=%s")
         params.append(int(subject_filter))
     if category_filter.isdigit():
-        clauses.append("q.category_id=?")
+        clauses.append("q.category_id=%s")
         params.append(int(category_filter))
 
     sql = f"""
@@ -3263,7 +2919,7 @@ def teacher_questions():
                WHERE c.is_archived=0 AND s.is_archived=0 ORDER BY s.name, c.sort_order, c.name"""
         ).fetchall()
         active_counts = {row["type"]: row["n"] for row in conn.execute(
-            "SELECT type, COUNT(*) AS n FROM question_bank WHERE teacher_id=? AND is_archived=0 GROUP BY type", (current_teacher_id(),)
+            "SELECT type, COUNT(*) AS n FROM question_bank WHERE teacher_id=%s AND is_archived=0 GROUP BY type", (current_teacher_id(),)
         ).fetchall()}
     return render_template(
         "question_bank.html", rows=rows, subjects=subjects, categories=categories, type_labels=localized_type_labels(),
@@ -3290,24 +2946,24 @@ def resolve_csv_subject_category(conn, row, default_subject_id=None, default_cat
     subject = None
     if subject_value:
         if subject_value.isdigit():
-            subject = conn.execute("SELECT * FROM subjects WHERE id=? AND is_archived=0", (int(subject_value),)).fetchone()
+            subject = conn.execute("SELECT * FROM subjects WHERE id=%s AND is_archived=0", (int(subject_value),)).fetchone()
         if not subject:
-            subject = conn.execute("SELECT * FROM subjects WHERE name=? COLLATE NOCASE AND is_archived=0", (subject_value,)).fetchone()
+            subject = conn.execute("SELECT * FROM subjects WHERE name=%s  AND is_archived=0", (subject_value,)).fetchone()
     elif default_subject_id:
-        subject = conn.execute("SELECT * FROM subjects WHERE id=? AND is_archived=0", (default_subject_id,)).fetchone()
+        subject = conn.execute("SELECT * FROM subjects WHERE id=%s AND is_archived=0", (default_subject_id,)).fetchone()
     elif default_category_id:
         subject = conn.execute("""SELECT s.* FROM subjects s JOIN categories c ON c.subject_id=s.id
-                                  WHERE c.id=? AND c.is_archived=0 AND s.is_archived=0""", (default_category_id,)).fetchone()
+                                  WHERE c.id=%s AND c.is_archived=0 AND s.is_archived=0""", (default_category_id,)).fetchone()
     if not subject:
         raise ValueError("Asignatura no encontrada" if get_ui_language() == "es" else "Subject not found")
     category = None
     if category_value:
         if category_value.isdigit():
-            category = conn.execute("SELECT * FROM categories WHERE id=? AND subject_id=? AND is_archived=0", (int(category_value), subject["id"])).fetchone()
+            category = conn.execute("SELECT * FROM categories WHERE id=%s AND subject_id=%s AND is_archived=0", (int(category_value), subject["id"])).fetchone()
         if not category:
-            category = conn.execute("SELECT * FROM categories WHERE subject_id=? AND name=? COLLATE NOCASE AND is_archived=0", (subject["id"], category_value)).fetchone()
+            category = conn.execute("SELECT * FROM categories WHERE subject_id=%s AND name=%s  AND is_archived=0", (subject["id"], category_value)).fetchone()
     elif default_category_id:
-        category = conn.execute("SELECT * FROM categories WHERE id=? AND subject_id=? AND is_archived=0", (default_category_id, subject["id"])).fetchone()
+        category = conn.execute("SELECT * FROM categories WHERE id=%s AND subject_id=%s AND is_archived=0", (default_category_id, subject["id"])).fetchone()
     if not category:
         raise ValueError("Categoría no encontrada" if get_ui_language() == "es" else "Category not found")
     return subject, category
@@ -3476,13 +3132,14 @@ def teacher_questions_import():
     with get_db() as conn:
         for idx, row in enumerate(rows, start=2):
             try:
-                values, missing_audio = question_values_from_csv(conn, row, default_subject_id, default_category_id)
-                qid = f"q_{secrets.token_hex(6)}"
-                insert_question_row(conn, qid, values, 0)
+                with conn.transaction():
+                    values, missing_audio = question_values_from_csv(conn, row, default_subject_id, default_category_id)
+                    qid = f"q_{secrets.token_hex(6)}"
+                    insert_question_row(conn, qid, values, 0)
                 imported += 1
                 if missing_audio:
                     needs_audio += 1
-            except (ValueError, sqlite3.IntegrityError) as exc:
+            except (ValueError, IntegrityError) as exc:
                 errors.append(f"Fila {idx}: {exc}" if get_ui_language() == "es" else f"Row {idx}: {exc}")
         conn.commit()
     if not imported:
@@ -3518,7 +3175,7 @@ def teacher_question_new():
 @teacher_required
 def teacher_question_edit(qid):
     with get_db() as conn:
-        row = conn.execute("SELECT * FROM question_bank WHERE id=? AND teacher_id=? AND is_archived=0", (qid, current_teacher_id())).fetchone()
+        row = conn.execute("SELECT * FROM question_bank WHERE id=%s AND teacher_id=%s AND is_archived=0", (qid, current_teacher_id())).fetchone()
     if not row:
         abort(404)
     if request.method == "POST":
@@ -3530,8 +3187,8 @@ def teacher_question_edit(qid):
             return question_form_view(row)
         with get_db() as conn:
             conn.execute(
-                """UPDATE question_bank SET subject_id=?,category_id=?,type=?,prompt=?,data_json=?,answer_json=?,
-                   audio=?,script=?,updated_at=? WHERE id=? AND teacher_id=?""",
+                """UPDATE question_bank SET subject_id=%s,category_id=%s,type=%s,prompt=%s,data_json=%s,answer_json=%s,
+                   audio=%s,script=%s,updated_at=%s WHERE id=%s AND teacher_id=%s""",
                 (values["subject_id"], values["category_id"], values["type"], values["prompt"], values["data_json"],
                  values["answer_json"], values["audio"], values["script"], now_iso(), qid, current_teacher_id()),
             )
@@ -3546,54 +3203,29 @@ def teacher_question_edit(qid):
 def teacher_question_toggle(qid):
     verify_csrf()
     with get_db() as conn:
-        row = conn.execute("SELECT is_active FROM question_bank WHERE id=? AND teacher_id=? AND is_archived=0", (qid, current_teacher_id())).fetchone()
+        row = conn.execute("SELECT is_active FROM question_bank WHERE id=%s AND teacher_id=%s AND is_archived=0", (qid, current_teacher_id())).fetchone()
         if not row:
             abort(404)
-        conn.execute("UPDATE question_bank SET is_active=?,updated_at=? WHERE id=? AND teacher_id=?", (0 if row["is_active"] else 1, now_iso(), qid, current_teacher_id()))
+        conn.execute("UPDATE question_bank SET is_active=%s,updated_at=%s WHERE id=%s AND teacher_id=%s", (0 if row["is_active"] else 1, now_iso(), qid, current_teacher_id()))
         conn.commit()
     flash_ui("Question availability updated.", "success")
     return redirect(request.referrer or url_for("teacher_questions"))
 
 
 def clone_question_row(conn, source_row, new_id):
-    """Clone a question across current and legacy schemas without assuming optional columns."""
+    """Clone a question while preserving ownership and server-side answer data."""
     timestamp = now_iso()
-    schema = conn.execute("PRAGMA table_info(question_bank)").fetchall()
-    source_keys = set(source_row.keys())
-    insert_columns = []
-    insert_values = []
     copy_suffix = " (copy)"
     if has_request_context():
         copy_suffix = " (copia)" if get_ui_language() == "es" else " (copy)"
-
-    for col in schema:
-        name = col[1]
-        # INTEGER PRIMARY KEY columns could be auto-generated, but question_bank uses a TEXT id.
-        if name == "id":
-            value = new_id
-        elif name == "prompt":
-            value = f"{source_row['prompt']}{copy_suffix}"
-        elif name == "is_active":
-            value = 0
-        elif name == "is_archived":
-            value = 0
-        elif name in {"created_at", "updated_at"}:
-            value = timestamp
-        elif name in source_keys:
-            value = source_row[name]
-        elif col[3] and col[4] is None:
-            # A required legacy column not present in SELECT * would be unsafe to guess.
-            raise sqlite3.IntegrityError(f"Required legacy column cannot be duplicated: {name}")
-        else:
-            continue
-        insert_columns.append(name)
-        insert_values.append(value)
-
-    placeholders = ",".join("?" for _ in insert_columns)
-    quoted_columns = ",".join(f'"{name}"' for name in insert_columns)
     conn.execute(
-        f"INSERT INTO question_bank ({quoted_columns}) VALUES ({placeholders})",
-        insert_values,
+        """INSERT INTO question_bank
+           (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,audio,script,
+            is_active,is_archived,created_at,updated_at)
+           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,0,0,%s,%s)""",
+        (new_id, source_row["teacher_id"], source_row["subject_id"], source_row["category_id"],
+         source_row["type"], f"{source_row['prompt']}{copy_suffix}", source_row["data_json"],
+         source_row["answer_json"], source_row["audio"], source_row["script"], timestamp, timestamp),
     )
 
 
@@ -3604,12 +3236,12 @@ def teacher_question_duplicate(qid):
     new_id = f"q_{secrets.token_hex(6)}"
     try:
         with get_db() as conn:
-            row = conn.execute("SELECT * FROM question_bank WHERE id=? AND teacher_id=? AND is_archived=0", (qid, current_teacher_id())).fetchone()
+            row = conn.execute("SELECT * FROM question_bank WHERE id=%s AND teacher_id=%s AND is_archived=0", (qid, current_teacher_id())).fetchone()
             if not row:
                 abort(404)
             clone_question_row(conn, row, new_id)
             conn.commit()
-    except sqlite3.DatabaseError as exc:
+    except DatabaseError as exc:
         app.logger.exception("Could not duplicate question %s", qid)
         message = (
             "No se pudo duplicar la pregunta. Revisa la estructura de la base de datos e inténtalo nuevamente."
@@ -3627,11 +3259,11 @@ def teacher_question_duplicate(qid):
 def teacher_question_archive(qid):
     verify_csrf()
     with get_db() as conn:
-        row = conn.execute("SELECT id FROM question_bank WHERE id=? AND teacher_id=? AND is_archived=0", (qid, current_teacher_id())).fetchone()
+        row = conn.execute("SELECT id FROM question_bank WHERE id=%s AND teacher_id=%s AND is_archived=0", (qid, current_teacher_id())).fetchone()
         if not row:
             abort(404)
         conn.execute(
-            "UPDATE question_bank SET is_active=0,is_archived=1,updated_at=? WHERE id=? AND teacher_id=?",
+            "UPDATE question_bank SET is_active=0,is_archived=1,updated_at=%s WHERE id=%s AND teacher_id=%s",
             (now_iso(), qid, current_teacher_id()),
         )
         conn.commit()
@@ -3648,14 +3280,14 @@ def teacher_questions_bulk():
     if not ids:
         flash_ui("Select at least one question.", "error")
         return redirect(url_for("teacher_questions"))
-    placeholders = ",".join("?" for _ in ids)
+    placeholders = ",".join("%s" for _ in ids)
     with get_db() as conn:
         if action == "activate":
-            conn.execute(f"UPDATE question_bank SET is_active=1,updated_at=? WHERE teacher_id=? AND id IN ({placeholders})", [now_iso(), current_teacher_id(), *ids])
+            conn.execute(f"UPDATE question_bank SET is_active=1,updated_at=%s WHERE teacher_id=%s AND id IN ({placeholders})", [now_iso(), current_teacher_id(), *ids])
         elif action == "deactivate":
-            conn.execute(f"UPDATE question_bank SET is_active=0,updated_at=? WHERE teacher_id=? AND id IN ({placeholders})", [now_iso(), current_teacher_id(), *ids])
+            conn.execute(f"UPDATE question_bank SET is_active=0,updated_at=%s WHERE teacher_id=%s AND id IN ({placeholders})", [now_iso(), current_teacher_id(), *ids])
         elif action == "archive":
-            conn.execute(f"UPDATE question_bank SET is_active=0,is_archived=1,updated_at=? WHERE teacher_id=? AND id IN ({placeholders})", [now_iso(), current_teacher_id(), *ids])
+            conn.execute(f"UPDATE question_bank SET is_active=0,is_archived=1,updated_at=%s WHERE teacher_id=%s AND id IN ({placeholders})", [now_iso(), current_teacher_id(), *ids])
         else:
             flash_ui("Choose a valid bulk action.", "error")
             return redirect(url_for("teacher_questions"))
@@ -3673,13 +3305,13 @@ def teacher_catalog():
             """SELECT s.*, COUNT(DISTINCT c.id) AS category_count, COUNT(DISTINCT q.id) AS question_count
                FROM subjects s
                LEFT JOIN categories c ON c.subject_id=s.id AND c.is_archived=0
-               LEFT JOIN question_bank q ON q.subject_id=s.id AND q.teacher_id=? AND q.is_archived=0
+               LEFT JOIN question_bank q ON q.subject_id=s.id AND q.teacher_id=%s AND q.is_archived=0
                WHERE s.is_archived=0 GROUP BY s.id ORDER BY s.name""", (teacher_id,)
         ).fetchall()
         categories = conn.execute(
             """SELECT c.*, s.name AS subject_name, COUNT(q.id) AS question_count
                FROM categories c JOIN subjects s ON s.id=c.subject_id
-               LEFT JOIN question_bank q ON q.category_id=c.id AND q.teacher_id=? AND q.is_archived=0
+               LEFT JOIN question_bank q ON q.category_id=c.id AND q.teacher_id=%s AND q.is_archived=0
                WHERE c.is_archived=0 AND s.is_archived=0
                GROUP BY c.id ORDER BY s.name,c.sort_order,c.name""", (teacher_id,)
         ).fetchall()
@@ -3699,12 +3331,12 @@ def teacher_subject_new():
     try:
         with get_db() as conn:
             conn.execute(
-                "INSERT INTO subjects(name,description,created_at,updated_at) VALUES(?,?,?,?)",
+                "INSERT INTO subjects(name,description,created_at,updated_at) VALUES(%s,%s,%s,%s)",
                 (name, description, timestamp, timestamp),
             )
             conn.commit()
         flash_ui("Subject created.", "success")
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         flash_ui("A subject with that name already exists.", "error")
     return redirect(url_for("teacher_catalog"))
 
@@ -3720,10 +3352,10 @@ def teacher_subject_edit(subject_id):
         return redirect(url_for("teacher_catalog"))
     try:
         with get_db() as conn:
-            conn.execute("UPDATE subjects SET name=?,description=?,updated_at=? WHERE id=? AND is_archived=0", (name, description, now_iso(), subject_id))
+            conn.execute("UPDATE subjects SET name=%s,description=%s,updated_at=%s WHERE id=%s AND is_archived=0", (name, description, now_iso(), subject_id))
             conn.commit()
         flash_ui("Subject updated.", "success")
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         flash_ui("A subject with that name already exists.", "error")
     return redirect(url_for("teacher_catalog"))
 
@@ -3733,19 +3365,19 @@ def teacher_subject_edit(subject_id):
 def teacher_subject_archive(subject_id):
     verify_csrf()
     with get_db() as conn:
-        subject = conn.execute("SELECT id,name FROM subjects WHERE id=? AND is_archived=0", (subject_id,)).fetchone()
+        subject = conn.execute("SELECT id,name FROM subjects WHERE id=%s AND is_archived=0", (subject_id,)).fetchone()
         if not subject:
             abort(404)
-        remaining = conn.execute("SELECT id FROM subjects WHERE is_archived=0 AND id<>? ORDER BY name", (subject_id,)).fetchall()
+        remaining = conn.execute("SELECT id FROM subjects WHERE is_archived=0 AND id<>%s ORDER BY name", (subject_id,)).fetchall()
         if not remaining:
             flash_ui("At least one active subject must remain.", "error")
             return redirect(url_for("teacher_catalog"))
-        conn.execute("UPDATE subjects SET is_archived=1,updated_at=? WHERE id=?", (now_iso(), subject_id))
-        conn.execute("UPDATE categories SET is_archived=1,updated_at=? WHERE subject_id=?", (now_iso(), subject_id))
-        conn.execute("UPDATE question_bank SET is_active=0,is_archived=1,updated_at=? WHERE subject_id=?", (now_iso(), subject_id))
+        conn.execute("UPDATE subjects SET is_archived=1,updated_at=%s WHERE id=%s", (now_iso(), subject_id))
+        conn.execute("UPDATE categories SET is_archived=1,updated_at=%s WHERE subject_id=%s", (now_iso(), subject_id))
+        conn.execute("UPDATE question_bank SET is_active=0,is_archived=1,updated_at=%s WHERE subject_id=%s", (now_iso(), subject_id))
         current = setting(conn, "current_subject_id")
         if str(current) == str(subject_id):
-            conn.execute("UPDATE app_settings SET value=? WHERE key='current_subject_id'", (str(remaining[0]["id"]),))
+            conn.execute("UPDATE app_settings SET value=%s WHERE key='current_subject_id'", (str(remaining[0]["id"]),))
         conn.commit()
     flash_ui("Subject archived.", "success")
     return redirect(url_for("teacher_catalog"))
@@ -3769,17 +3401,17 @@ def teacher_category_new():
     timestamp = now_iso()
     try:
         with get_db() as conn:
-            exists = conn.execute("SELECT 1 FROM subjects WHERE id=? AND is_archived=0", (subject_id,)).fetchone()
+            exists = conn.execute("SELECT 1 FROM subjects WHERE id=%s AND is_archived=0", (subject_id,)).fetchone()
             if not exists:
                 flash_ui("Selected subject does not exist.", "error")
                 return redirect(url_for("teacher_catalog"))
             conn.execute(
-                "INSERT INTO categories(subject_id,name,description,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                "INSERT INTO categories(subject_id,name,description,sort_order,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s)",
                 (subject_id, name, description, sort_order, timestamp, timestamp),
             )
             conn.commit()
         flash_ui("Category created.", "success")
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         flash_ui("That category already exists in this subject.", "error")
     return redirect(url_for("teacher_catalog"))
 
@@ -3802,13 +3434,13 @@ def teacher_category_edit(category_id):
     try:
         with get_db() as conn:
             conn.execute(
-                "UPDATE categories SET subject_id=?,name=?,description=?,sort_order=?,updated_at=? WHERE id=? AND is_archived=0",
+                "UPDATE categories SET subject_id=%s,name=%s,description=%s,sort_order=%s,updated_at=%s WHERE id=%s AND is_archived=0",
                 (subject_id, name, description, sort_order, now_iso(), category_id),
             )
-            conn.execute("UPDATE question_bank SET subject_id=?,updated_at=? WHERE category_id=?", (subject_id, now_iso(), category_id))
+            conn.execute("UPDATE question_bank SET subject_id=%s,updated_at=%s WHERE category_id=%s", (subject_id, now_iso(), category_id))
             conn.commit()
         flash_ui("Category updated.", "success")
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         flash_ui("That category already exists in this subject.", "error")
     return redirect(url_for("teacher_catalog"))
 
@@ -3818,11 +3450,11 @@ def teacher_category_edit(category_id):
 def teacher_category_archive(category_id):
     verify_csrf()
     with get_db() as conn:
-        category = conn.execute("SELECT id FROM categories WHERE id=? AND is_archived=0", (category_id,)).fetchone()
+        category = conn.execute("SELECT id FROM categories WHERE id=%s AND is_archived=0", (category_id,)).fetchone()
         if not category:
             abort(404)
-        conn.execute("UPDATE categories SET is_archived=1,updated_at=? WHERE id=?", (now_iso(), category_id))
-        conn.execute("UPDATE question_bank SET is_active=0,is_archived=1,updated_at=? WHERE category_id=?", (now_iso(), category_id))
+        conn.execute("UPDATE categories SET is_archived=1,updated_at=%s WHERE id=%s", (now_iso(), category_id))
+        conn.execute("UPDATE question_bank SET is_active=0,is_archived=1,updated_at=%s WHERE category_id=%s", (now_iso(), category_id))
         conn.commit()
     flash_ui("Category archived.", "success")
     return redirect(url_for("teacher_catalog"))
@@ -3833,7 +3465,7 @@ def teacher_category_archive(category_id):
 def exam_row(conn, exam_id):
     return conn.execute(
         """SELECT e.*,s.name AS subject_name FROM exams e JOIN subjects s ON s.id=e.subject_id
-           WHERE e.id=? AND e.teacher_id=? AND e.is_archived=0""", (exam_id, current_teacher_id())
+           WHERE e.id=%s AND e.teacher_id=%s AND e.is_archived=0""", (exam_id, current_teacher_id())
     ).fetchone()
 
 
@@ -3847,9 +3479,9 @@ def teacher_exams():
                       (SELECT COUNT(*) FROM exam_assignments a WHERE a.exam_id=e.id AND a.is_active=1) AS assignment_count,
                       (SELECT COUNT(*) FROM attempts t WHERE t.exam_id=e.id AND t.status='submitted') AS result_count
                FROM exams e JOIN subjects s ON s.id=e.subject_id
-               WHERE e.teacher_id=? AND e.is_archived=0 ORDER BY e.updated_at DESC,e.title COLLATE NOCASE""", (current_teacher_id(),)
+               WHERE e.teacher_id=%s AND e.is_archived=0 ORDER BY e.updated_at DESC,e.title """, (current_teacher_id(),)
         ).fetchall()
-        subjects = conn.execute("SELECT * FROM subjects WHERE is_archived=0 ORDER BY name COLLATE NOCASE").fetchall()
+        subjects = conn.execute("SELECT * FROM subjects WHERE is_archived=0 ORDER BY name ").fetchall()
     return render_template("teacher_exams.html", rows=rows, subjects=subjects)
 
 
@@ -3864,14 +3496,16 @@ def teacher_exam_new():
     except ValueError:
         subject_id = 0
     with get_db() as conn:
-        valid = conn.execute("SELECT 1 FROM subjects WHERE id=? AND is_archived=0", (subject_id,)).fetchone()
+        valid = conn.execute("SELECT 1 FROM subjects WHERE id=%s AND is_archived=0", (subject_id,)).fetchone()
         if not title or not valid:
             flash_ui("Exam title and a valid subject are required.", "error")
             return redirect(url_for("teacher_exams"))
-        cur = conn.execute("INSERT INTO exams(teacher_id,subject_id,title,description,is_published,is_archived,created_at,updated_at) VALUES(?,?,?,?,0,0,?,?)",
-                           (current_teacher_id(),subject_id,title,description,now_iso(),now_iso()))
-        exam_id = cur.lastrowid
-        conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(?,?,1,?,?)", (exam_id,"A",now_iso(),now_iso()))
+        exam_id = conn.execute(
+            """INSERT INTO exams(teacher_id,subject_id,title,description,is_published,is_archived,created_at,updated_at)
+               VALUES(%s,%s,%s,%s,0,0,%s,%s) RETURNING id""",
+            (current_teacher_id(),subject_id,title,description,now_iso(),now_iso()),
+        ).fetchone()["id"]
+        conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(%s,%s,1,%s,%s)", (exam_id,"A",now_iso(),now_iso()))
         conn.commit()
     flash_ui("Exam created.", "success")
     return redirect(url_for("teacher_exam_detail", exam_id=exam_id))
@@ -3886,21 +3520,21 @@ def teacher_exam_detail(exam_id):
         versions = conn.execute(
             """SELECT v.*,COUNT(evq.question_id) AS question_count FROM exam_versions v
                LEFT JOIN exam_version_questions evq ON evq.version_id=v.id
-               WHERE v.exam_id=? AND v.is_active=1 GROUP BY v.id ORDER BY v.id""", (exam_id,)
+               WHERE v.exam_id=%s AND v.is_active=1 GROUP BY v.id ORDER BY v.id""", (exam_id,)
         ).fetchall()
         archived_versions = conn.execute(
             """SELECT v.*,COUNT(evq.question_id) AS question_count FROM exam_versions v
                LEFT JOIN exam_version_questions evq ON evq.version_id=v.id
-               WHERE v.exam_id=? AND v.is_active=0 GROUP BY v.id ORDER BY v.updated_at DESC, v.id DESC""", (exam_id,)
+               WHERE v.exam_id=%s AND v.is_active=0 GROUP BY v.id ORDER BY v.updated_at DESC, v.id DESC""", (exam_id,)
         ).fetchall()
         assignments = conn.execute(
             """SELECT a.*,sec.name AS section_name,v.name AS fixed_version_name,
                       (SELECT COUNT(*) FROM attempts t WHERE t.assignment_id=a.id) AS attempt_count
                FROM exam_assignments a JOIN sections sec ON sec.id=a.section_id
                LEFT JOIN exam_versions v ON v.id=a.fixed_version_id
-               WHERE a.exam_id=? AND a.is_active=1 AND sec.is_archived=0 ORDER BY sec.name""", (exam_id,)
+               WHERE a.exam_id=%s AND a.is_active=1 AND sec.is_archived=0 ORDER BY sec.name""", (exam_id,)
         ).fetchall()
-        sections = conn.execute("SELECT * FROM sections WHERE is_archived=0 ORDER BY name COLLATE NOCASE").fetchall()
+        sections = conn.execute("SELECT * FROM sections WHERE is_archived=0 ORDER BY name ").fetchall()
     return render_template("teacher_exam_detail.html", exam=exam_row_data, versions=versions, archived_versions=archived_versions, assignments=assignments, sections=sections)
 
 
@@ -3915,7 +3549,7 @@ def teacher_exam_edit(exam_id):
         return redirect(url_for("teacher_exam_detail",exam_id=exam_id))
     with get_db() as conn:
         if not exam_row(conn,exam_id): abort(404)
-        conn.execute("UPDATE exams SET title=?,description=?,updated_at=? WHERE id=?",(title,description,now_iso(),exam_id)); conn.commit()
+        conn.execute("UPDATE exams SET title=%s,description=%s,updated_at=%s WHERE id=%s",(title,description,now_iso(),exam_id)); conn.commit()
     flash_ui("Exam updated.","success")
     return redirect(url_for("teacher_exam_detail",exam_id=exam_id))
 
@@ -3929,12 +3563,12 @@ def teacher_exam_publish(exam_id):
         if not exam: abort(404)
         new_value=0 if exam["is_published"] else 1
         if new_value:
-            valid_versions=conn.execute("""SELECT COUNT(*) AS n FROM exam_versions v WHERE v.exam_id=? AND v.is_active=1
+            valid_versions=conn.execute("""SELECT COUNT(*) AS n FROM exam_versions v WHERE v.exam_id=%s AND v.is_active=1
                 AND EXISTS(SELECT 1 FROM exam_version_questions q WHERE q.version_id=v.id)""",(exam_id,)).fetchone()["n"]
             if not valid_versions:
                 flash_ui("Add questions to at least one active version before publishing.","error")
                 return redirect(url_for("teacher_exam_detail",exam_id=exam_id))
-        conn.execute("UPDATE exams SET is_published=?,updated_at=? WHERE id=?",(new_value,now_iso(),exam_id)); conn.commit()
+        conn.execute("UPDATE exams SET is_published=%s,updated_at=%s WHERE id=%s",(new_value,now_iso(),exam_id)); conn.commit()
     flash_ui("Exam updated.","success")
     return redirect(url_for("teacher_exam_detail",exam_id=exam_id))
 
@@ -3945,8 +3579,8 @@ def teacher_exam_archive(exam_id):
     verify_csrf()
     with get_db() as conn:
         if not exam_row(conn,exam_id): abort(404)
-        conn.execute("UPDATE exams SET is_published=0,is_archived=1,updated_at=? WHERE id=?",(now_iso(),exam_id))
-        conn.execute("UPDATE exam_assignments SET is_active=0,updated_at=? WHERE exam_id=?",(now_iso(),exam_id)); conn.commit()
+        conn.execute("UPDATE exams SET is_published=0,is_archived=1,updated_at=%s WHERE id=%s",(now_iso(),exam_id))
+        conn.execute("UPDATE exam_assignments SET is_active=0,updated_at=%s WHERE exam_id=%s",(now_iso(),exam_id)); conn.commit()
     flash_ui("Exam archived.","success")
     return redirect(url_for("teacher_exams"))
 
@@ -3960,8 +3594,8 @@ def teacher_exam_version_new(exam_id):
     try:
         with get_db() as conn:
             if not exam_row(conn,exam_id): abort(404)
-            cur=conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(?,?,1,?,?)",(exam_id,name,now_iso(),now_iso())); conn.commit(); version_id=cur.lastrowid
-    except sqlite3.IntegrityError:
+            version_id=conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(%s,%s,1,%s,%s) RETURNING id",(exam_id,name,now_iso(),now_iso())).fetchone()["id"]; conn.commit()
+    except IntegrityError:
         flash_ui("A version with that name already exists.","error"); return redirect(url_for("teacher_exam_detail",exam_id=exam_id))
     flash_ui("Version created.","success")
     return redirect(url_for("teacher_exam_version_questions",exam_id=exam_id,version_id=version_id))
@@ -3976,10 +3610,10 @@ def teacher_exam_version_edit(exam_id,version_id):
     try:
         with get_db() as conn:
             if not exam_row(conn, exam_id): abort(404)
-            row=conn.execute("SELECT 1 FROM exam_versions WHERE id=? AND exam_id=? AND is_active=1",(version_id,exam_id)).fetchone()
+            row=conn.execute("SELECT 1 FROM exam_versions WHERE id=%s AND exam_id=%s AND is_active=1",(version_id,exam_id)).fetchone()
             if not row: abort(404)
-            conn.execute("UPDATE exam_versions SET name=?,updated_at=? WHERE id=?",(name,now_iso(),version_id)); conn.commit()
-    except sqlite3.IntegrityError:
+            conn.execute("UPDATE exam_versions SET name=%s,updated_at=%s WHERE id=%s",(name,now_iso(),version_id)); conn.commit()
+    except IntegrityError:
         flash_ui("A version with that name already exists.","error")
         return redirect(url_for("teacher_exam_detail",exam_id=exam_id))
     flash_ui("Exam updated.","success")
@@ -3992,13 +3626,13 @@ def teacher_exam_version_duplicate(exam_id,version_id):
     verify_csrf()
     with get_db() as conn:
         if not exam_row(conn, exam_id): abort(404)
-        src=conn.execute("SELECT * FROM exam_versions WHERE id=? AND exam_id=? AND is_active=1",(version_id,exam_id)).fetchone()
+        src=conn.execute("SELECT * FROM exam_versions WHERE id=%s AND exam_id=%s AND is_active=1",(version_id,exam_id)).fetchone()
         if not src: abort(404)
         base=src["name"]+" copy"; name=base; i=2
-        while conn.execute("SELECT 1 FROM exam_versions WHERE exam_id=? AND name=? COLLATE NOCASE",(exam_id,name)).fetchone():
+        while conn.execute("SELECT 1 FROM exam_versions WHERE exam_id=%s AND name=%s ",(exam_id,name)).fetchone():
             name=f"{base} {i}"; i+=1
-        cur=conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(?,?,1,?,?)",(exam_id,name,now_iso(),now_iso())); new_id=cur.lastrowid
-        conn.execute("INSERT INTO exam_version_questions(version_id,question_id,position) SELECT ?,question_id,position FROM exam_version_questions WHERE version_id=?",(new_id,version_id)); conn.commit()
+        new_id=conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(%s,%s,1,%s,%s) RETURNING id",(exam_id,name,now_iso(),now_iso())).fetchone()["id"]
+        conn.execute("INSERT INTO exam_version_questions(version_id,question_id,position) SELECT %s,question_id,position FROM exam_version_questions WHERE version_id=%s",(new_id,version_id)); conn.commit()
     flash_ui("Version duplicated.","success")
     return redirect(url_for("teacher_exam_version_questions",exam_id=exam_id,version_id=new_id))
 
@@ -4009,29 +3643,29 @@ def teacher_exam_version_archive(exam_id, version_id):
     verify_csrf()
     with get_db() as conn:
         exam = exam_row(conn, exam_id)
-        version = conn.execute("SELECT * FROM exam_versions WHERE id=? AND exam_id=? AND is_active=1", (version_id, exam_id)).fetchone()
+        version = conn.execute("SELECT * FROM exam_versions WHERE id=%s AND exam_id=%s AND is_active=1", (version_id, exam_id)).fetchone()
         if not exam or not version:
             abort(404)
         fixed_use = conn.execute(
-            "SELECT 1 FROM exam_assignments WHERE exam_id=? AND fixed_version_id=? AND version_mode='fixed' AND is_active=1 LIMIT 1",
+            "SELECT 1 FROM exam_assignments WHERE exam_id=%s AND fixed_version_id=%s AND version_mode='fixed' AND is_active=1 LIMIT 1",
             (exam_id, version_id),
         ).fetchone()
         if fixed_use:
             flash_ui("This version is used by an active fixed assignment. Change or remove that assignment before archiving it.", "error")
             return redirect(url_for("teacher_exam_detail", exam_id=exam_id))
         if exam["is_published"]:
-            active_assignment = conn.execute("SELECT 1 FROM exam_assignments WHERE exam_id=? AND is_active=1 LIMIT 1", (exam_id,)).fetchone()
+            active_assignment = conn.execute("SELECT 1 FROM exam_assignments WHERE exam_id=%s AND is_active=1 LIMIT 1", (exam_id,)).fetchone()
             if active_assignment:
                 usable_after = conn.execute(
                     """SELECT COUNT(*) AS n FROM exam_versions v
-                       WHERE v.exam_id=? AND v.is_active=1 AND v.id<>?
+                       WHERE v.exam_id=%s AND v.is_active=1 AND v.id<>%s
                          AND EXISTS(SELECT 1 FROM exam_version_questions q WHERE q.version_id=v.id)""",
                     (exam_id, version_id),
                 ).fetchone()["n"]
                 if not usable_after:
                     flash_ui("A published exam with active assignments must keep at least one usable version.", "error")
                     return redirect(url_for("teacher_exam_detail", exam_id=exam_id))
-        conn.execute("UPDATE exam_versions SET is_active=0,updated_at=? WHERE id=?", (now_iso(), version_id))
+        conn.execute("UPDATE exam_versions SET is_active=0,updated_at=%s WHERE id=%s", (now_iso(), version_id))
         conn.commit()
     flash_ui("Version archived.", "success")
     return redirect(url_for("teacher_exam_detail", exam_id=exam_id))
@@ -4044,10 +3678,10 @@ def teacher_exam_version_restore(exam_id, version_id):
     with get_db() as conn:
         if not exam_row(conn, exam_id):
             abort(404)
-        version = conn.execute("SELECT 1 FROM exam_versions WHERE id=? AND exam_id=? AND is_active=0", (version_id, exam_id)).fetchone()
+        version = conn.execute("SELECT 1 FROM exam_versions WHERE id=%s AND exam_id=%s AND is_active=0", (version_id, exam_id)).fetchone()
         if not version:
             abort(404)
-        conn.execute("UPDATE exam_versions SET is_active=1,updated_at=? WHERE id=?", (now_iso(), version_id))
+        conn.execute("UPDATE exam_versions SET is_active=1,updated_at=%s WHERE id=%s", (now_iso(), version_id))
         conn.commit()
     flash_ui("Version restored.", "success")
     return redirect(url_for("teacher_exam_detail", exam_id=exam_id))
@@ -4059,19 +3693,19 @@ def teacher_exam_version_questions(exam_id,version_id):
     search=request.args.get("q","").strip(); cat=request.args.get("category","").strip(); typ=request.args.get("type","").strip()
     with get_db() as conn:
         exam=exam_row(conn,exam_id)
-        version=conn.execute("SELECT * FROM exam_versions WHERE id=? AND exam_id=? AND is_active=1",(version_id,exam_id)).fetchone()
+        version=conn.execute("SELECT * FROM exam_versions WHERE id=%s AND exam_id=%s AND is_active=1",(version_id,exam_id)).fetchone()
         if not exam or not version: abort(404)
-        clauses=["q.subject_id=?","q.teacher_id=?","q.is_archived=0","c.is_archived=0"]; params=[exam["subject_id"],current_teacher_id()]
-        if search: clauses.append("q.prompt LIKE ?"); params.append(f"%{search}%")
-        if cat.isdigit(): clauses.append("q.category_id=?"); params.append(int(cat))
-        if typ in TYPE_LABELS: clauses.append("q.type=?"); params.append(typ)
+        clauses=["q.subject_id=%s","q.teacher_id=%s","q.is_archived=0","c.is_archived=0"]; params=[exam["subject_id"],current_teacher_id()]
+        if search: clauses.append("q.prompt ILIKE %s"); params.append(f"%{search}%")
+        if cat.isdigit(): clauses.append("q.category_id=%s"); params.append(int(cat))
+        if typ in TYPE_LABELS: clauses.append("q.type=%s"); params.append(typ)
         rows=conn.execute(f"""SELECT q.*,c.name AS category_name,s.name AS subject_name,
                 CASE WHEN evq.question_id IS NULL THEN 0 ELSE 1 END AS selected
                 FROM question_bank q JOIN categories c ON c.id=q.category_id JOIN subjects s ON s.id=q.subject_id
-                LEFT JOIN exam_version_questions evq ON evq.version_id=? AND evq.question_id=q.id
+                LEFT JOIN exam_version_questions evq ON evq.version_id=%s AND evq.question_id=q.id
                 WHERE {' AND '.join(clauses)} ORDER BY selected DESC,c.sort_order,c.name,q.type,q.updated_at DESC""",[version_id,*params]).fetchall()
-        categories=conn.execute("SELECT * FROM categories WHERE subject_id=? AND is_archived=0 ORDER BY sort_order,name",(exam["subject_id"],)).fetchall()
-        selected_ids=[r["question_id"] for r in conn.execute("SELECT question_id FROM exam_version_questions WHERE version_id=? ORDER BY position",(version_id,)).fetchall()]
+        categories=conn.execute("SELECT * FROM categories WHERE subject_id=%s AND is_archived=0 ORDER BY sort_order,name",(exam["subject_id"],)).fetchall()
+        selected_ids=[r["question_id"] for r in conn.execute("SELECT question_id FROM exam_version_questions WHERE version_id=%s ORDER BY position",(version_id,)).fetchall()]
         unavailable_ids={r["id"] for r in rows if not listening_row_usable(r)}
     return render_template("teacher_version_questions.html",exam=exam,version=version,rows=rows,categories=categories,selected_ids=selected_ids,unavailable_ids=unavailable_ids,type_labels=localized_type_labels(),filters={"q":search,"category":cat,"type":typ})
 
@@ -4083,17 +3717,17 @@ def teacher_exam_version_questions_save(exam_id,version_id):
     for qid in request.form.getlist("question_ids"):
         if qid and qid not in ids: ids.append(qid)
     with get_db() as conn:
-        exam=exam_row(conn,exam_id); version=conn.execute("SELECT 1 FROM exam_versions WHERE id=? AND exam_id=? AND is_active=1",(version_id,exam_id)).fetchone()
+        exam=exam_row(conn,exam_id); version=conn.execute("SELECT 1 FROM exam_versions WHERE id=%s AND exam_id=%s AND is_active=1",(version_id,exam_id)).fetchone()
         if not exam or not version: abort(404)
         valid=[]
         if ids:
-            ph=','.join('?' for _ in ids)
-            candidate_rows=conn.execute(f"SELECT * FROM question_bank WHERE id IN ({ph}) AND teacher_id=? AND subject_id=? AND is_archived=0",[*ids,current_teacher_id(),exam["subject_id"]]).fetchall()
+            ph=','.join('%s' for _ in ids)
+            candidate_rows=conn.execute(f"SELECT * FROM question_bank WHERE id IN ({ph}) AND teacher_id=%s AND subject_id=%s AND is_archived=0",[*ids,current_teacher_id(),exam["subject_id"]]).fetchall()
             valid=[r["id"] for r in candidate_rows if listening_row_usable(r)]
-        conn.execute("DELETE FROM exam_version_questions WHERE version_id=?",(version_id,))
+        conn.execute("DELETE FROM exam_version_questions WHERE version_id=%s",(version_id,))
         for pos,qid in enumerate(ids):
-            if qid in valid: conn.execute("INSERT INTO exam_version_questions(version_id,question_id,position) VALUES(?,?,?)",(version_id,qid,pos))
-        conn.execute("UPDATE exam_versions SET updated_at=? WHERE id=?",(now_iso(),version_id)); conn.execute("UPDATE exams SET updated_at=? WHERE id=?",(now_iso(),exam_id)); conn.commit()
+            if qid in valid: conn.execute("INSERT INTO exam_version_questions(version_id,question_id,position) VALUES(%s,%s,%s)",(version_id,qid,pos))
+        conn.execute("UPDATE exam_versions SET updated_at=%s WHERE id=%s",(now_iso(),version_id)); conn.execute("UPDATE exams SET updated_at=%s WHERE id=%s",(now_iso(),exam_id)); conn.commit()
     flash_ui("Question selection saved.","success")
     return redirect(url_for("teacher_exam_version_questions",exam_id=exam_id,version_id=version_id))
 
@@ -4111,16 +3745,16 @@ def teacher_exam_assign(exam_id):
         try: fixed=int(request.form.get("fixed_version_id","0"))
         except ValueError: fixed=None
     with get_db() as conn:
-        exam=exam_row(conn,exam_id); section=conn.execute("SELECT 1 FROM sections WHERE id=? AND is_archived=0",(section_id,)).fetchone()
+        exam=exam_row(conn,exam_id); section=conn.execute("SELECT 1 FROM sections WHERE id=%s AND is_archived=0",(section_id,)).fetchone()
         if not exam or not section:
             flash_ui("Choose a valid section.","error"); return redirect(url_for("teacher_exam_detail",exam_id=exam_id))
         if mode=="fixed":
-            valid=conn.execute("""SELECT 1 FROM exam_versions v WHERE v.id=? AND v.exam_id=? AND v.is_active=1
+            valid=conn.execute("""SELECT 1 FROM exam_versions v WHERE v.id=%s AND v.exam_id=%s AND v.is_active=1
                 AND EXISTS(SELECT 1 FROM exam_version_questions q WHERE q.version_id=v.id)""",(fixed,exam_id)).fetchone()
             if not valid:
                 flash_ui("Choose a valid fixed version.","error"); return redirect(url_for("teacher_exam_detail",exam_id=exam_id))
         conn.execute("""INSERT INTO exam_assignments(exam_id,section_id,version_mode,fixed_version_id,is_active,created_at,updated_at)
-            VALUES(?,?,?,?,1,?,?) ON CONFLICT(exam_id,section_id) DO UPDATE SET version_mode=excluded.version_mode,
+            VALUES(%s,%s,%s,%s,1,%s,%s) ON CONFLICT(exam_id,section_id) DO UPDATE SET version_mode=excluded.version_mode,
             fixed_version_id=excluded.fixed_version_id,is_active=1,updated_at=excluded.updated_at""",(exam_id,section_id,mode,fixed,now_iso(),now_iso())); conn.commit()
     flash_ui("Assignment saved.","success")
     return redirect(url_for("teacher_exam_detail",exam_id=exam_id))
@@ -4132,9 +3766,9 @@ def teacher_exam_assignment_remove(exam_id,assignment_id):
     verify_csrf()
     with get_db() as conn:
         if not exam_row(conn, exam_id): abort(404)
-        row=conn.execute("SELECT * FROM exam_assignments WHERE id=? AND exam_id=?",(assignment_id,exam_id)).fetchone()
+        row=conn.execute("SELECT * FROM exam_assignments WHERE id=%s AND exam_id=%s",(assignment_id,exam_id)).fetchone()
         if not row: abort(404)
-        conn.execute("UPDATE exam_assignments SET is_active=0,updated_at=? WHERE id=?",(now_iso(),assignment_id)); conn.commit()
+        conn.execute("UPDATE exam_assignments SET is_active=0,updated_at=%s WHERE id=%s",(now_iso(),assignment_id)); conn.commit()
     flash_ui("Assignment removed.","success")
     return redirect(url_for("teacher_exam_detail",exam_id=exam_id))
 
@@ -4143,7 +3777,7 @@ def teacher_exam_assignment_remove(exam_id,assignment_id):
 @admin_required
 def teacher_users():
     with get_db() as conn:
-        rows = conn.execute("SELECT id,full_name,email,role,is_active,last_login_at,created_at FROM teachers ORDER BY is_active DESC, full_name COLLATE NOCASE").fetchall()
+        rows = conn.execute("SELECT id,full_name,email,role,is_active,last_login_at,created_at FROM teachers ORDER BY is_active DESC, full_name ").fetchall()
     return render_template("teacher_users.html", rows=rows)
 
 
@@ -4167,11 +3801,11 @@ def teacher_user_new():
         with get_db() as conn:
             conn.execute(
                 """INSERT INTO teachers(full_name,email,password_hash,role,is_active,must_change_password,created_at,updated_at)
-                   VALUES(?,?,?,?,1,0,?,?)""",
+                   VALUES(%s,%s,%s,%s,1,0,%s,%s)""",
                 (name, email, generate_password_hash(password), role, now_iso(), now_iso()),
             )
             conn.commit()
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         flash_ui("That email address is already assigned to another teacher.", "error")
         return redirect(url_for("teacher_users"))
     flash_ui("Teacher account created.", "success")
@@ -4191,7 +3825,7 @@ def teacher_user_edit(teacher_id):
         flash_ui("Teacher name and a valid email are required.", "error")
         return redirect(url_for("teacher_users"))
     with get_db() as conn:
-        account = conn.execute("SELECT * FROM teachers WHERE id=?", (teacher_id,)).fetchone()
+        account = conn.execute("SELECT * FROM teachers WHERE id=%s", (teacher_id,)).fetchone()
         if not account:
             abort(404)
         if account["role"] == "admin" and role != "admin":
@@ -4200,9 +3834,10 @@ def teacher_user_edit(teacher_id):
                 flash_ui("At least one active administrator is required.", "error")
                 return redirect(url_for("teacher_users"))
         try:
-            conn.execute("UPDATE teachers SET full_name=?,email=?,role=?,updated_at=? WHERE id=?", (name, email, role, now_iso(), teacher_id))
+            conn.execute("UPDATE teachers SET full_name=%s,email=%s,role=%s,updated_at=%s WHERE id=%s", (name, email, role, now_iso(), teacher_id))
             conn.commit()
-        except sqlite3.IntegrityError:
+        except IntegrityError:
+            conn.rollback()
             flash_ui("That email address is already assigned to another teacher.", "error")
             return redirect(url_for("teacher_users"))
     if teacher_id == current_teacher_id():
@@ -4221,9 +3856,9 @@ def teacher_user_password(teacher_id):
         flash_ui("Password must be at least 8 characters and include at least one letter and one number.", "error")
         return redirect(url_for("teacher_users"))
     with get_db() as conn:
-        if not conn.execute("SELECT 1 FROM teachers WHERE id=?", (teacher_id,)).fetchone():
+        if not conn.execute("SELECT 1 FROM teachers WHERE id=%s", (teacher_id,)).fetchone():
             abort(404)
-        conn.execute("UPDATE teachers SET password_hash=?,updated_at=? WHERE id=?", (generate_password_hash(password), now_iso(), teacher_id))
+        conn.execute("UPDATE teachers SET password_hash=%s,updated_at=%s WHERE id=%s", (generate_password_hash(password), now_iso(), teacher_id))
         conn.commit()
     flash_ui("Teacher password reset.", "success")
     return redirect(url_for("teacher_users"))
@@ -4237,7 +3872,7 @@ def teacher_user_toggle(teacher_id):
         flash_ui("You cannot disable your own active session.", "error")
         return redirect(url_for("teacher_users"))
     with get_db() as conn:
-        account = conn.execute("SELECT * FROM teachers WHERE id=?", (teacher_id,)).fetchone()
+        account = conn.execute("SELECT * FROM teachers WHERE id=%s", (teacher_id,)).fetchone()
         if not account:
             abort(404)
         new_value = 0 if account["is_active"] else 1
@@ -4246,7 +3881,7 @@ def teacher_user_toggle(teacher_id):
             if admin_count <= 1:
                 flash_ui("At least one active administrator is required.", "error")
                 return redirect(url_for("teacher_users"))
-        conn.execute("UPDATE teachers SET is_active=?,updated_at=? WHERE id=?", (new_value, now_iso(), teacher_id))
+        conn.execute("UPDATE teachers SET is_active=%s,updated_at=%s WHERE id=%s", (new_value, now_iso(), teacher_id))
         conn.commit()
     flash_ui("Teacher account enabled." if new_value else "Teacher account disabled.", "success")
     return redirect(url_for("teacher_users"))
@@ -4262,7 +3897,7 @@ def teacher_account_password():
         new_password = request.form.get("new_password", "")
         confirm_password = request.form.get("confirm_password", "")
         with get_db() as conn:
-            account = conn.execute("SELECT * FROM teachers WHERE id=?", (teacher_id,)).fetchone()
+            account = conn.execute("SELECT * FROM teachers WHERE id=%s", (teacher_id,)).fetchone()
             if not account or not check_password_hash(account["password_hash"], current_password):
                 flash_ui("Your current password is incorrect.", "error")
             elif new_password != confirm_password:
@@ -4270,7 +3905,7 @@ def teacher_account_password():
             elif not valid_student_password(new_password):
                 flash_ui("Password must be at least 8 characters and include at least one letter and one number.", "error")
             else:
-                conn.execute("UPDATE teachers SET password_hash=?,updated_at=? WHERE id=?", (generate_password_hash(new_password), now_iso(), teacher_id))
+                conn.execute("UPDATE teachers SET password_hash=%s,updated_at=%s WHERE id=%s", (generate_password_hash(new_password), now_iso(), teacher_id))
                 conn.commit()
                 flash_ui("Password updated successfully.", "success")
                 return redirect(url_for("teacher"))
@@ -4311,7 +3946,7 @@ def teacher_setup():
                           "rules_version": rules_version, "require_rules_acknowledgment": require_rules,
                           "rules_updated_at": now_iso()}
                 for key, value in values.items():
-                    conn.execute("INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key,value))
+                    conn.execute("INSERT INTO app_settings(key,value) VALUES(%s,%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key,value))
                 conn.commit()
             flash(tr("Assessment settings saved.", language=ui_language), "success")
             session.pop("_assessment_ui_language", None)
@@ -4430,7 +4065,7 @@ def export_xlsx():
     attempt_ids = [r["id"] for r in rows]
     with get_db() as conn:
         if attempt_ids:
-            placeholders = ",".join("?" for _ in attempt_ids)
+            placeholders = ",".join("%s" for _ in attempt_ids)
             events = conn.execute(
                 f"""SELECT e.attempt_id,a.assessment_title,a.exam_version_name,a.assessment_subject,a.student_name,a.student_email,a.section,e.event_type,e.occurred_at,e.detail_json
                     FROM integrity_events e JOIN attempts a ON a.id=e.attempt_id

@@ -21,7 +21,7 @@
 flowchart LR
     Internet[Browser no confiable] -->|HTTPS recomendado| Proxy[Reverse proxy]
     Proxy --> App[Flask confiable]
-    App --> DB[(SQLite sensible)]
+    App --> DB[(PostgreSQL sensible)]
     App --> Audio[(static/audio URL-addressable)]
     App --> Export[PDF CSV XLSX]
     Export --> User[Dispositivo autorizado]
@@ -43,10 +43,10 @@ Todo dato del browser, incluidos IDs, respuestas, contadores, filenames y payloa
 | Amenaza | Riesgo | Control actual | Brecha/recomendación |
 |---|---|---|---|
 | Fuerza bruta | Acceso no autorizado | Hash + mensaje genérico | Rate limiting, alertas y lockout progresivo |
-| Robo de sesión | Suplantación | Cookie firmada; `session.clear()` | TLS, `Secure`, `HttpOnly`, `SameSite`, expiración explícita |
+| Robo de sesión | Suplantación | Cookie firmada; `session.clear()`; `Secure` por default; `HttpOnly`; `SameSite=Lax` | Servir por TLS, rotar `SECRET_KEY` y definir expiración explícita |
 | CSRF | Mutación con sesión ajena | Tokens en la mayoría de formularios | Corregir login docente sin token, API JSON de integridad sin token y logout docente condicional |
 | IDOR | Leer/modificar otro tenant | Queries con owner/parent | Mantener pruebas negativas por cada nested route |
-| SQL injection | Lectura/escritura arbitraria | Parámetros `?`; fragmentos dinámicos derivados de allowlists | Prohibir concatenar input sin allowlist |
+| SQL injection | Lectura/escritura arbitraria | Parámetros psycopg `%s`; fragmentos dinámicos derivados de allowlists | Prohibir concatenar input sin allowlist |
 | XSS almacenado/reflejado | Robo de sesión/datos | Autoescape Jinja; JSON con `tojson` | Evitar `safe`; revisar export/PDF y CSP |
 | Upload malicioso | Ejecución/DoS | Extensiones allowlist, `secure_filename`, tamaño total 20MB, nombre aleatorio | Validar MIME/magic bytes, cuota y antivirus según riesgo |
 | Audio estático conocido | Lectura no autorizada de listening | Nombre de upload aleatorio | `static/audio` no exige auth; mover fuera de static y servir con endpoint autorizado o URL firmada |
@@ -69,7 +69,7 @@ Werkzeug genera/verifica hashes. `seed.py` genera PBKDF2 compatible para no depe
 
 ### Autorización y tenancy
 
-`teacher_required` comprueba cuenta activa. `admin_required` añade rol. Los contenidos nested se resuelven desde `exam_row()` owned. El resultado/PDF permite student owner o teacher owner, pero su rama teacher solo confía en la sesión existente y ownership: no revalida `teachers.is_active`. Esto es hardening pendiente, no un bypass cross-tenant. Admin no tiene bypass para penalizaciones/resultados ajenos.
+`teacher_required` comprueba cuenta activa. `admin_required` añade rol. Los contenidos nested se resuelven desde `exam_row()` owned. El resultado/PDF permite student owner o teacher owner; su rama docente revalida `teachers.is_active`, limpia la sesión si la cuenta fue desactivada y mantiene el filtro de ownership. Admin no tiene bypass para penalizaciones/resultados ajenos.
 
 ### CSRF y métodos
 
@@ -104,7 +104,7 @@ Los bloqueos de copiar, menú contextual, atajos, fullscreen y visibility son di
 ### Antes de producción
 
 - [ ] Cambiar `SECRET_KEY` y credenciales bootstrap.
-- [ ] Servir solo por TLS y configurar cookies seguras.
+- [ ] Servir solo por TLS y mantener `SESSION_COOKIE_SECURE=1`; el override `0` es exclusivo de HTTP local aislado.
 - [ ] Ejecutar con WSGI, no servidor Flask de desarrollo.
 - [ ] Restringir permisos de DB, audio, logs y backups.
 - [ ] Para audio confidencial, mover uploads fuera de `static/` y servirlos mediante autorización attempt/question o URLs firmadas breves.

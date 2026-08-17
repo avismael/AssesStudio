@@ -14,14 +14,14 @@ Teacher-owned questions, exams and attempts are distributed across the three sub
 students and sections remain shared institutional roster data.
 
 The script uses Python's standard library and creates Werkzeug-compatible PBKDF2 password hashes.
-It writes to data/results.db by default, or to DATABASE_PATH when that environment
-variable is set.
+It requires DATABASE_URL and an Alembic-migrated PostgreSQL database. Audio is
+written under AUDIO_DIR (static/audio by default).
 
 Usage:
-    python seed.py
-    python seed.py --keep-settings
-    python seed.py --no-results
-    python seed.py --clean
+    python seed.py --confirm-development-database
+    python seed.py --confirm-development-database --keep-settings
+    python seed.py --confirm-development-database --no-results
+    python seed.py --confirm-development-database --clean
 
 Re-running is safe for development: only rows whose IDs start with ``seed_`` are
 replaced. Existing real attempts/questions are not deleted.
@@ -36,19 +36,17 @@ import math
 import os
 import random
 import secrets
-import sqlite3
 import struct
 import wave
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from database import close_pool, connection as database_connection
 from policy_defaults import DEFAULT_RULES_VERSION, DEFAULT_STUDENT_RULES_EN, DEFAULT_STUDENT_RULES_ES
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-AUDIO_DIR = BASE_DIR / "static" / "audio"
-DB_PATH = Path(os.getenv("DATABASE_PATH", str(DATA_DIR / "results.db")))
+AUDIO_DIR = Path(os.getenv("AUDIO_DIR", str(BASE_DIR / "static" / "audio")))
 
 TYPE_KEYS = [
     "multiple_choice",
@@ -137,328 +135,39 @@ def generate_password_hash(password: str, iterations: int = 1_000_000) -> str:
     return f"pbkdf2:sha256:{iterations}${salt}${digest}"
 
 
-def connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+def connect():
+    return database_connection()
 
 
-def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+def verify_schema(conn) -> None:
+    """Refuse to seed databases that have not been migrated to the expected revision."""
+    try:
+        row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+    except Exception as exc:
+        raise RuntimeError("Database schema is missing; run 'alembic upgrade head' before seed.py") from exc
+    if not row or row["version_num"] != "20260816_0001":
+        raise RuntimeError("Database schema is not current; run 'alembic upgrade head' before seed.py")
 
-
-def ensure_column(conn: sqlite3.Connection, table: str, name: str, definition: str) -> None:
-    if name not in table_columns(conn, table):
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
-
-
-def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create the universal schema when seed.py is run before the Flask app."""
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS teachers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            full_name TEXT NOT NULL,
-            email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            password_hash TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'teacher',
-            is_active INTEGER NOT NULL DEFAULT 1,
-            must_change_password INTEGER NOT NULL DEFAULT 0,
-            last_login_at TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS attempts (
-            id TEXT PRIMARY KEY,
-            teacher_id INTEGER,
-            student_id INTEGER,
-            student_email TEXT,
-            student_name TEXT NOT NULL,
-            section TEXT NOT NULL,
-            started_at TEXT NOT NULL,
-            submitted_at TEXT,
-            seed INTEGER NOT NULL,
-            score REAL,
-            total REAL,
-            percentage REAL,
-            grade10 REAL,
-            category_scores TEXT,
-            type_scores TEXT,
-            answers_json TEXT,
-            status TEXT NOT NULL DEFAULT 'in_progress',
-            focus_departures INTEGER NOT NULL DEFAULT 0,
-            focus_returns INTEGER NOT NULL DEFAULT 0,
-            away_seconds REAL NOT NULL DEFAULT 0,
-            longest_away_seconds REAL NOT NULL DEFAULT 0,
-            blur_events INTEGER NOT NULL DEFAULT 0,
-            pagehide_events INTEGER NOT NULL DEFAULT 0,
-            context_menu_attempts INTEGER NOT NULL DEFAULT 0,
-            copy_attempts INTEGER NOT NULL DEFAULT 0,
-            cut_attempts INTEGER NOT NULL DEFAULT 0,
-            paste_attempts INTEGER NOT NULL DEFAULT 0,
-            shortcut_attempts INTEGER NOT NULL DEFAULT 0,
-            fullscreen_exits INTEGER NOT NULL DEFAULT 0,
-            last_security_event_at TEXT,
-            questions_json TEXT,
-            assessment_title TEXT,
-            assessment_subject TEXT,
-            category_labels_json TEXT,
-            ui_language TEXT,
-            exam_id INTEGER,
-            exam_version_id INTEGER,
-            assignment_id INTEGER,
-            exam_version_name TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS integrity_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            attempt_id TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            occurred_at TEXT NOT NULL,
-            detail_json TEXT,
-            FOREIGN KEY (attempt_id) REFERENCES attempts(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS attempt_penalties (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            attempt_id TEXT NOT NULL,
-            teacher_id INTEGER NOT NULL,
-            points REAL NOT NULL CHECK(points > 0),
-            reason TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            revoked_at TEXT,
-            revoked_by INTEGER,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            FOREIGN KEY (attempt_id) REFERENCES attempts(id),
-            FOREIGN KEY (teacher_id) REFERENCES teachers(id),
-            FOREIGN KEY (revoked_by) REFERENCES teachers(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS app_settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS sections (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            description TEXT,
-            is_archived INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS students (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            full_name TEXT NOT NULL COLLATE NOCASE,
-            section_id INTEGER NOT NULL,
-            student_code TEXT UNIQUE,
-            email TEXT,
-            password_hash TEXT,
-            must_change_password INTEGER NOT NULL DEFAULT 0,
-            password_updated_at TEXT,
-            last_login_at TEXT,
-            notes TEXT,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            is_archived INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            UNIQUE(section_id, full_name),
-            FOREIGN KEY (section_id) REFERENCES sections(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS subjects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            description TEXT,
-            is_archived INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subject_id INTEGER NOT NULL,
-            name TEXT NOT NULL COLLATE NOCASE,
-            description TEXT,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            is_archived INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            UNIQUE(subject_id, name),
-            FOREIGN KEY (subject_id) REFERENCES subjects(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS question_bank (
-            id TEXT PRIMARY KEY,
-            teacher_id INTEGER,
-            subject_id INTEGER,
-            category_id INTEGER,
-            type TEXT NOT NULL,
-            prompt TEXT NOT NULL,
-            data_json TEXT NOT NULL,
-            answer_json TEXT NOT NULL,
-            audio TEXT,
-            script TEXT,
-            is_active INTEGER NOT NULL DEFAULT 0,
-            is_archived INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (subject_id) REFERENCES subjects(id),
-            FOREIGN KEY (category_id) REFERENCES categories(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS exams (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            teacher_id INTEGER,
-            subject_id INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            description TEXT,
-            is_published INTEGER NOT NULL DEFAULT 0,
-            is_archived INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (subject_id) REFERENCES subjects(id)
-        );
-        CREATE TABLE IF NOT EXISTS exam_versions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            exam_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            UNIQUE(exam_id,name),
-            FOREIGN KEY (exam_id) REFERENCES exams(id)
-        );
-        CREATE TABLE IF NOT EXISTS exam_version_questions (
-            version_id INTEGER NOT NULL,
-            question_id TEXT NOT NULL,
-            position INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY(version_id,question_id),
-            FOREIGN KEY (version_id) REFERENCES exam_versions(id) ON DELETE CASCADE,
-            FOREIGN KEY (question_id) REFERENCES question_bank(id)
-        );
-        CREATE TABLE IF NOT EXISTS exam_assignments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            exam_id INTEGER NOT NULL,
-            section_id INTEGER NOT NULL,
-            version_mode TEXT NOT NULL DEFAULT 'random',
-            fixed_version_id INTEGER,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            UNIQUE(exam_id,section_id),
-            FOREIGN KEY (exam_id) REFERENCES exams(id),
-            FOREIGN KEY (section_id) REFERENCES sections(id),
-            FOREIGN KEY (fixed_version_id) REFERENCES exam_versions(id)
-        );
-        CREATE TABLE IF NOT EXISTS student_exam_allocations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            assignment_id INTEGER NOT NULL,
-            student_id INTEGER NOT NULL,
-            version_id INTEGER NOT NULL,
-            allocated_at TEXT NOT NULL,
-            UNIQUE(assignment_id,student_id),
-            FOREIGN KEY (assignment_id) REFERENCES exam_assignments(id),
-            FOREIGN KEY (student_id) REFERENCES students(id),
-            FOREIGN KEY (version_id) REFERENCES exam_versions(id)
-        );
-        """
-    )
-
-    # Helpful when using a DB created by an older build.
-    for name, definition in {
-        "teacher_id": "INTEGER",
-        "student_id": "INTEGER",
-        "student_email": "TEXT",
-        "category_scores": "TEXT",
-        "type_scores": "TEXT",
-        "answers_json": "TEXT",
-        "focus_departures": "INTEGER NOT NULL DEFAULT 0",
-        "focus_returns": "INTEGER NOT NULL DEFAULT 0",
-        "away_seconds": "REAL NOT NULL DEFAULT 0",
-        "longest_away_seconds": "REAL NOT NULL DEFAULT 0",
-        "blur_events": "INTEGER NOT NULL DEFAULT 0",
-        "pagehide_events": "INTEGER NOT NULL DEFAULT 0",
-        "context_menu_attempts": "INTEGER NOT NULL DEFAULT 0",
-        "copy_attempts": "INTEGER NOT NULL DEFAULT 0",
-        "cut_attempts": "INTEGER NOT NULL DEFAULT 0",
-        "paste_attempts": "INTEGER NOT NULL DEFAULT 0",
-        "shortcut_attempts": "INTEGER NOT NULL DEFAULT 0",
-        "fullscreen_exits": "INTEGER NOT NULL DEFAULT 0",
-        "last_security_event_at": "TEXT",
-        "questions_json": "TEXT",
-        "assessment_title": "TEXT",
-        "assessment_subject": "TEXT",
-        "category_labels_json": "TEXT",
-        "ui_language": "TEXT",
-        "exam_id": "INTEGER",
-        "exam_version_id": "INTEGER",
-        "assignment_id": "INTEGER",
-        "exam_version_name": "TEXT",
-        "policy_version": "TEXT",
-        "policy_accepted_at": "TEXT",
-        "policy_text": "TEXT",
-    }.items():
-        ensure_column(conn, "attempts", name, definition)
-
-    for name, definition in {
-        "email": "TEXT",
-        "password_hash": "TEXT",
-        "must_change_password": "INTEGER NOT NULL DEFAULT 0",
-        "password_updated_at": "TEXT",
-        "last_login_at": "TEXT",
-        "is_archived": "INTEGER NOT NULL DEFAULT 0",
-    }.items():
-        ensure_column(conn, "students", name, definition)
-
-    ensure_column(conn, "question_bank", "teacher_id", "INTEGER")
-    ensure_column(conn, "question_bank", "subject_id", "INTEGER")
-    ensure_column(conn, "question_bank", "category_id", "INTEGER")
-    ensure_column(conn, "exams", "teacher_id", "INTEGER")
-
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_integrity_attempt ON integrity_events(attempt_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_attempt_penalties_active ON attempt_penalties(attempt_id,is_active)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_attempt_penalties_teacher ON attempt_penalties(teacher_id,created_at)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_teachers_active ON teachers(is_active, role, full_name)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_question_bank_teacher ON question_bank(teacher_id, subject_id, is_archived)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_exams_teacher ON exams(teacher_id, subject_id, is_archived)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_teacher ON attempts(teacher_id, status, submitted_at)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_question_bank_active ON question_bank(subject_id, is_active, is_archived)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_question_bank_category ON question_bank(category_id, type)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_categories_subject ON categories(subject_id, is_archived, sort_order, name)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_students_section ON students(section_id, is_active, is_archived, full_name)")
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_students_email_unique ON students(email COLLATE NOCASE) WHERE email IS NOT NULL AND TRIM(email) <> ''")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_exams_subject ON exams(subject_id,is_published,is_archived)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_versions_exam ON exam_versions(exam_id,is_active)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_assignments_section ON exam_assignments(section_id,is_active)")
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_attempt_once_per_assignment ON attempts(student_id,assignment_id) WHERE assignment_id IS NOT NULL")
-
-
-def upsert_demo_teachers(conn: sqlite3.Connection) -> tuple[dict[str, int], int]:
+def upsert_demo_teachers(conn: Any) -> tuple[dict[str, int], int]:
     """Create demo teacher accounts and return subject->teacher ownership plus admin id."""
     stamp = now_iso()
     subject_owner: dict[str, int] = {}
     admin_id = 0
     for item in DEMO_TEACHERS:
-        row = conn.execute("SELECT id FROM teachers WHERE email=? COLLATE NOCASE", (item["email"],)).fetchone()
+        row = conn.execute("SELECT id FROM teachers WHERE email=%s ", (item["email"],)).fetchone()
         password_hash = generate_password_hash(item["password"])
         if row:
             teacher_id = int(row["id"])
             conn.execute(
-                """UPDATE teachers SET full_name=?,password_hash=?,role=?,is_active=1,must_change_password=0,updated_at=? WHERE id=?""",
+                """UPDATE teachers SET full_name=%s,password_hash=%s,role=%s,is_active=1,must_change_password=0,updated_at=%s WHERE id=%s""",
                 (item["name"], password_hash, item["role"], stamp, teacher_id),
             )
         else:
-            cur = conn.execute(
+            teacher_id = conn.execute(
                 """INSERT INTO teachers(full_name,email,password_hash,role,is_active,must_change_password,created_at,updated_at)
-                   VALUES(?,?,?,?,1,0,?,?)""",
+                   VALUES(%s,%s,%s,%s,1,0,%s,%s) RETURNING id""",
                 (item["name"], item["email"], password_hash, item["role"], stamp, stamp),
-            )
-            teacher_id = int(cur.lastrowid)
+            ).fetchone()["id"]
         if item.get("role") == "admin":
             admin_id = teacher_id
         if item.get("subject"):
@@ -466,32 +175,32 @@ def upsert_demo_teachers(conn: sqlite3.Connection) -> tuple[dict[str, int], int]
     return subject_owner, admin_id
 
 
-def upsert_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
+def upsert_setting(conn: Any, key: str, value: str) -> None:
     conn.execute(
-        "INSERT INTO app_settings(key,value) VALUES(?,?) "
+        "INSERT INTO app_settings(key,value) VALUES(%s,%s) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (key, value),
     )
 
 
-def get_or_create_subject(conn: sqlite3.Connection, name: str, description: str) -> int:
+def get_or_create_subject(conn: Any, name: str, description: str) -> int:
     stamp = now_iso()
-    row = conn.execute("SELECT id FROM subjects WHERE name=? COLLATE NOCASE", (name,)).fetchone()
+    row = conn.execute("SELECT id FROM subjects WHERE name=%s ", (name,)).fetchone()
     if row:
         conn.execute(
-            "UPDATE subjects SET description=?, is_archived=0, updated_at=? WHERE id=?",
+            "UPDATE subjects SET description=%s, is_archived=0, updated_at=%s WHERE id=%s",
             (description, stamp, row["id"]),
         )
         return int(row["id"])
-    cur = conn.execute(
-        "INSERT INTO subjects(name,description,is_archived,created_at,updated_at) VALUES(?,?,0,?,?)",
+    row = conn.execute(
+        "INSERT INTO subjects(name,description,is_archived,created_at,updated_at) VALUES(%s,%s,0,%s,%s) RETURNING id",
         (name, description, stamp, stamp),
-    )
-    return int(cur.lastrowid)
+    ).fetchone()
+    return int(row["id"])
 
 
 def get_or_create_category(
-    conn: sqlite3.Connection,
+    conn: Any,
     subject_id: int,
     name: str,
     description: str,
@@ -499,21 +208,21 @@ def get_or_create_category(
 ) -> int:
     stamp = now_iso()
     row = conn.execute(
-        "SELECT id FROM categories WHERE subject_id=? AND name=? COLLATE NOCASE",
+        "SELECT id FROM categories WHERE subject_id=%s AND name=%s ",
         (subject_id, name),
     ).fetchone()
     if row:
         conn.execute(
-            "UPDATE categories SET description=?, sort_order=?, is_archived=0, updated_at=? WHERE id=?",
+            "UPDATE categories SET description=%s, sort_order=%s, is_archived=0, updated_at=%s WHERE id=%s",
             (description, sort_order, stamp, row["id"]),
         )
         return int(row["id"])
-    cur = conn.execute(
+    row = conn.execute(
         """INSERT INTO categories(subject_id,name,description,sort_order,is_archived,created_at,updated_at)
-           VALUES(?,?,?,?,0,?,?)""",
+           VALUES(%s,%s,%s,%s,0,%s,%s) RETURNING id""",
         (subject_id, name, description, sort_order, stamp, stamp),
-    )
-    return int(cur.lastrowid)
+    ).fetchone()
+    return int(row["id"])
 
 
 def q_mc(qid: str, prompt: str, choices: list[str], correct_index: int) -> dict[str, Any]:
@@ -694,7 +403,7 @@ def demo_question_specs() -> dict[tuple[str, str], list[dict[str, Any]]]:
 
 
 def upsert_question(
-    conn: sqlite3.Connection,
+    conn: Any,
     teacher_id: int,
     subject_id: int,
     category_id: int,
@@ -704,7 +413,7 @@ def upsert_question(
     conn.execute(
         """INSERT INTO question_bank
            (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,audio,script,is_active,is_archived,created_at,updated_at)
-           VALUES(?,?,?,?,?,?,?,?,?,?,1,0,?,?)
+           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,0,%s,%s)
            ON CONFLICT(id) DO UPDATE SET
              teacher_id=excluded.teacher_id,
              subject_id=excluded.subject_id,
@@ -735,7 +444,7 @@ def upsert_question(
     )
 
 
-def row_to_snapshot(row: sqlite3.Row) -> dict[str, Any]:
+def row_to_snapshot(row: dict[str, Any]) -> dict[str, Any]:
     data = json.loads(row["data_json"] or "{}")
     question = {
         "id": row["id"],
@@ -755,17 +464,16 @@ def row_to_snapshot(row: sqlite3.Row) -> dict[str, Any]:
     return question
 
 
-def fetch_subject_questions(conn: sqlite3.Connection, subject_id: int, teacher_id: int | None = None) -> list[dict[str, Any]]:
-    teacher_clause = " AND q.teacher_id=?" if teacher_id is not None else ""
-    params: tuple[Any, ...] = (subject_id, teacher_id) if teacher_id is not None else (subject_id,)
+def fetch_version_questions(conn: Any, version_id: int) -> list[dict[str, Any]]:
     rows = conn.execute(
         """SELECT q.*, s.name AS subject_name, c.name AS category_name
-           FROM question_bank q
+           FROM exam_version_questions evq
+           JOIN question_bank q ON q.id=evq.question_id
            JOIN subjects s ON s.id=q.subject_id
            JOIN categories c ON c.id=q.category_id
-           WHERE q.subject_id=? AND q.is_active=1 AND q.is_archived=0""" + teacher_clause + """
-           ORDER BY c.sort_order, c.name, q.id""",
-        params,
+           WHERE evq.version_id=%s AND q.is_active=1 AND q.is_archived=0
+           ORDER BY evq.position, q.id""",
+        (version_id,),
     ).fetchall()
     return [row_to_snapshot(row) for row in rows]
 
@@ -774,48 +482,50 @@ def blank_type_scores() -> dict[str, dict[str, float]]:
     return {key: {"earned": 0.0, "total": 0.0} for key in TYPE_KEYS}
 
 
-def upsert_demo_roster(conn: sqlite3.Connection) -> dict[tuple[str, str], int]:
+def upsert_demo_roster(conn: Any) -> dict[tuple[str, str], int]:
     """Create the 3 demo sections and 15 registered student accounts."""
     roster: dict[tuple[str, str], int] = {}
     stamp = now_iso()
     password_hash = generate_password_hash(DEMO_PASSWORD)
     for section_name, names in SECTIONS.items():
-        row = conn.execute("SELECT id FROM sections WHERE name=? COLLATE NOCASE", (section_name,)).fetchone()
+        row = conn.execute("SELECT id FROM sections WHERE name=%s ", (section_name,)).fetchone()
         if row:
             section_id = int(row["id"])
-            conn.execute("UPDATE sections SET is_archived=0,updated_at=? WHERE id=?", (stamp, section_id))
+            conn.execute("UPDATE sections SET is_archived=0,updated_at=%s WHERE id=%s", (stamp, section_id))
         else:
-            cur = conn.execute(
-                "INSERT INTO sections(name,description,is_archived,created_at,updated_at) VALUES(?,?,0,?,?)",
+            section_id = conn.execute(
+                "INSERT INTO sections(name,description,is_archived,created_at,updated_at) VALUES(%s,%s,0,%s,%s) RETURNING id",
                 (section_name, f"Demo section {section_name}", stamp, stamp),
-            )
-            section_id = int(cur.lastrowid)
+            ).fetchone()["id"]
         for idx, full_name in enumerate(names, start=1):
             code = f"SEED-{section_name}-{idx:02d}"
             email = f"seed.{section_name.lower()}{idx:02d}@example.com"
             student = conn.execute(
-                "SELECT id FROM students WHERE student_code=? OR email=? COLLATE NOCASE OR (section_id=? AND full_name=? COLLATE NOCASE)",
+                "SELECT id FROM students WHERE student_code=%s OR email=%s  OR (section_id=%s AND full_name=%s )",
                 (code, email, section_id, full_name),
             ).fetchone()
             if student:
                 student_id = int(student["id"])
                 conn.execute(
-                    """UPDATE students SET full_name=?,section_id=?,student_code=?,email=?,password_hash=?,must_change_password=0,
-                       password_updated_at=?,notes=?,is_active=1,updated_at=? WHERE id=?""",
+                    """UPDATE students SET full_name=%s,section_id=%s,student_code=%s,email=%s,password_hash=%s,must_change_password=0,
+                       password_updated_at=%s,notes=%s,is_active=1,updated_at=%s WHERE id=%s""",
                     (full_name, section_id, code, email, password_hash, stamp, "Demo student generated by seed.py", stamp, student_id),
                 )
             else:
-                cur = conn.execute(
+                student_id = conn.execute(
                     """INSERT INTO students(full_name,section_id,student_code,email,password_hash,must_change_password,password_updated_at,notes,is_active,created_at,updated_at)
-                       VALUES(?,?,?,?,?,0,?,?,1,?,?)""",
+                       VALUES(%s,%s,%s,%s,%s,0,%s,%s,1,%s,%s) RETURNING id""",
                     (full_name, section_id, code, email, password_hash, stamp, "Demo student generated by seed.py", stamp, stamp),
-                )
-                student_id = int(cur.lastrowid)
+                ).fetchone()["id"]
             roster[(section_name, full_name)] = student_id
     return roster
 
 
-def seed_demo_exams(conn: sqlite3.Connection, subject_ids: dict[str, int], teacher_ids: dict[str, int]) -> int:
+def seed_demo_exams(
+    conn: Any,
+    subject_ids: dict[str, int],
+    teacher_ids: dict[str, int],
+) -> tuple[int, dict[tuple[str, str], dict[str, Any]]]:
     """Create three published demo exams, each with two versions and section assignments."""
     stamp = now_iso()
     section_rows = conn.execute("SELECT id,name FROM sections WHERE name IN ('A','B','C') AND is_archived=0 ORDER BY name").fetchall()
@@ -825,63 +535,78 @@ def seed_demo_exams(conn: sqlite3.Connection, subject_ids: dict[str, int], teach
         ("Science", "SEED • Science Concepts", "Science demo exam for testing section assignments."),
     ]
     created = 0
+    assignment_map: dict[tuple[str, str], dict[str, Any]] = {}
     for subject_name, title, description in definitions:
         subject_id = subject_ids[subject_name]
         teacher_id = teacher_ids[subject_name]
-        row = conn.execute("SELECT id FROM exams WHERE title=? AND teacher_id=?", (title, teacher_id)).fetchone()
+        row = conn.execute("SELECT id FROM exams WHERE title=%s AND teacher_id=%s", (title, teacher_id)).fetchone()
         if row:
             exam_id = int(row["id"])
-            conn.execute("UPDATE exams SET teacher_id=?,subject_id=?,description=?,is_published=1,is_archived=0,updated_at=? WHERE id=?",
+            conn.execute("UPDATE exams SET teacher_id=%s,subject_id=%s,description=%s,is_published=1,is_archived=0,updated_at=%s WHERE id=%s",
                          (teacher_id, subject_id, description, stamp, exam_id))
         else:
-            cur = conn.execute("INSERT INTO exams(teacher_id,subject_id,title,description,is_published,is_archived,created_at,updated_at) VALUES(?,?,?,?,1,0,?,?)",
-                               (teacher_id, subject_id, title, description, stamp, stamp))
-            exam_id = int(cur.lastrowid)
-        qids = [r["id"] for r in conn.execute("SELECT id FROM question_bank WHERE teacher_id=? AND subject_id=? AND id LIKE 'seed_%' AND is_archived=0 ORDER BY id", (teacher_id, subject_id)).fetchall()]
+            exam_id = conn.execute("INSERT INTO exams(teacher_id,subject_id,title,description,is_published,is_archived,created_at,updated_at) VALUES(%s,%s,%s,%s,1,0,%s,%s) RETURNING id",
+                               (teacher_id, subject_id, title, description, stamp, stamp)).fetchone()["id"]
+        qids = [r["id"] for r in conn.execute("SELECT id FROM question_bank WHERE teacher_id=%s AND subject_id=%s AND id LIKE %s AND is_archived=0 ORDER BY id", (teacher_id, subject_id, "seed_%")).fetchall()]
         if len(qids) < 2:
             continue
         version_ids = []
         for idx, name in enumerate(("A", "B")):
-            vr = conn.execute("SELECT id FROM exam_versions WHERE exam_id=? AND name=?", (exam_id, name)).fetchone()
+            vr = conn.execute("SELECT id FROM exam_versions WHERE exam_id=%s AND name=%s", (exam_id, name)).fetchone()
             if vr:
                 version_id = int(vr["id"])
-                conn.execute("UPDATE exam_versions SET is_active=1,updated_at=? WHERE id=?", (stamp, version_id))
+                conn.execute("UPDATE exam_versions SET is_active=1,updated_at=%s WHERE id=%s", (stamp, version_id))
             else:
-                cur = conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(?,?,1,?,?)", (exam_id, name, stamp, stamp))
-                version_id = int(cur.lastrowid)
+                version_id = conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(%s,%s,1,%s,%s) RETURNING id", (exam_id, name, stamp, stamp)).fetchone()["id"]
             version_ids.append(version_id)
             # Each version gets a different overlapping subset so grading/version behavior is easy to inspect.
             chosen = [qid for pos, qid in enumerate(qids) if (pos + idx) % 2 == 0]
             if len(chosen) < 2:
                 chosen = qids[: min(4, len(qids))]
-            conn.execute("DELETE FROM exam_version_questions WHERE version_id=?", (version_id,))
+            conn.execute("DELETE FROM exam_version_questions WHERE version_id=%s", (version_id,))
             for position, qid in enumerate(chosen):
-                conn.execute("INSERT INTO exam_version_questions(version_id,question_id,position) VALUES(?,?,?)", (version_id, qid, position))
+                conn.execute("INSERT INTO exam_version_questions(version_id,question_id,position) VALUES(%s,%s,%s)", (version_id, qid, position))
         for sec in section_rows:
             # English/Science use random versions; Mathematics demonstrates a fixed version in A and random in B/C.
             mode = "fixed" if subject_name == "Mathematics" and sec["name"] == "A" else "random"
             fixed = version_ids[0] if mode == "fixed" else None
-            conn.execute("""INSERT INTO exam_assignments(exam_id,section_id,version_mode,fixed_version_id,is_active,created_at,updated_at)
-                VALUES(?,?,?,?,1,?,?) ON CONFLICT(exam_id,section_id) DO UPDATE SET version_mode=excluded.version_mode,
-                fixed_version_id=excluded.fixed_version_id,is_active=1,updated_at=excluded.updated_at""",
-                (exam_id, sec["id"], mode, fixed, stamp, stamp))
+            assignment_id = conn.execute("""INSERT INTO exam_assignments(exam_id,section_id,version_mode,fixed_version_id,is_active,created_at,updated_at)
+                VALUES(%s,%s,%s,%s,1,%s,%s) ON CONFLICT(exam_id,section_id) DO UPDATE SET version_mode=excluded.version_mode,
+                fixed_version_id=excluded.fixed_version_id,is_active=1,updated_at=excluded.updated_at RETURNING id""",
+                (exam_id, sec["id"], mode, fixed, stamp, stamp)).fetchone()["id"]
+            assignment_map[(subject_name, sec["name"])] = {
+                "assignment_id": assignment_id,
+                "exam_id": exam_id,
+                "version_ids": version_ids,
+                "fixed_version_id": fixed,
+            }
         created += 1
-    return created
+    return created, assignment_map
+
+
+def delete_seed_attempts(conn: Any) -> list[str]:
+    attempt_ids = [row["id"] for row in conn.execute(
+        "SELECT id FROM attempts WHERE id LIKE %s", ("seed_attempt_%",)
+    ).fetchall()]
+    if not attempt_ids:
+        return []
+    placeholders = ",".join("%s" for _ in attempt_ids)
+    conn.execute(f"DELETE FROM attempt_penalties WHERE attempt_id IN ({placeholders})", attempt_ids)
+    conn.execute(f"DELETE FROM integrity_events WHERE attempt_id IN ({placeholders})", attempt_ids)
+    conn.execute(f"DELETE FROM attempts WHERE id IN ({placeholders})", attempt_ids)
+    return attempt_ids
 
 
 def insert_demo_attempts(
-    conn: sqlite3.Connection,
+    conn: Any,
     subject_ids: dict[str, int],
     category_ids: dict[tuple[str, str], int],
     roster: dict[tuple[str, str], int],
     teacher_ids: dict[str, int],
+    assignment_map: dict[tuple[str, str], dict[str, Any]],
 ) -> int:
-    # Rebuild only generated attempts/events on each run.
-    seed_attempt_ids = [row["id"] for row in conn.execute("SELECT id FROM attempts WHERE id LIKE 'seed_attempt_%'").fetchall()]
-    if seed_attempt_ids:
-        placeholders = ",".join("?" for _ in seed_attempt_ids)
-        conn.execute(f"DELETE FROM integrity_events WHERE attempt_id IN ({placeholders})", seed_attempt_ids)
-        conn.execute(f"DELETE FROM attempts WHERE id IN ({placeholders})", seed_attempt_ids)
+    # Rebuild only generated attempts and their dependents on each run.
+    delete_seed_attempts(conn)
 
     rng = random.Random(20260814)
     subject_names = ["English", "Mathematics", "Science"]
@@ -892,7 +617,9 @@ def insert_demo_attempts(
         subject_name = subject_names[(index - 1) % len(subject_names)]
         subject_id = subject_ids[subject_name]
         teacher_id = teacher_ids[subject_name]
-        questions = fetch_subject_questions(conn, subject_id, teacher_id)
+        assignment = assignment_map[(subject_name, section)]
+        version_id = assignment["fixed_version_id"] or assignment["version_ids"][(index - 1) % len(assignment["version_ids"])]
+        questions = fetch_version_questions(conn, version_id)
         total = len(questions)
 
         # Deterministic but varied demo performance.
@@ -972,7 +699,13 @@ def insert_demo_attempts(
         attempt_id = f"seed_attempt_{index:02d}"
         last_security_event_at = max((event_time for _, event_time, _ in event_specs), default=None)
         student_id = roster.get((section, student_name))
-        student_email = conn.execute("SELECT email FROM students WHERE id=?", (student_id,)).fetchone()["email"] if student_id else None
+        student_email = conn.execute("SELECT email FROM students WHERE id=%s", (student_id,)).fetchone()["email"] if student_id else None
+        conn.execute(
+            """INSERT INTO student_exam_allocations(assignment_id,student_id,version_id,allocated_at)
+               VALUES(%s,%s,%s,%s) ON CONFLICT(assignment_id,student_id) DO UPDATE
+               SET version_id=excluded.version_id""",
+            (assignment["assignment_id"], student_id, version_id, now_iso(started)),
+        )
 
         conn.execute(
             """INSERT INTO attempts (
@@ -982,8 +715,16 @@ def insert_demo_attempts(
                 longest_away_seconds, blur_events, pagehide_events,
                 context_menu_attempts, copy_attempts, cut_attempts, paste_attempts,
                 shortcut_attempts, fullscreen_exits, last_security_event_at,
-                questions_json, assessment_title, assessment_subject, category_labels_json, ui_language
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'submitted',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                questions_json, assessment_title, assessment_subject, category_labels_json, ui_language,
+                exam_id, exam_version_id, assignment_id, exam_version_name
+            ) VALUES (
+                %s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,
+                'submitted',
+                %s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s
+            )""",
             (
                 attempt_id,
                 teacher_id,
@@ -1019,38 +760,38 @@ def insert_demo_attempts(
                 subject_name,
                 json.dumps(category_labels, ensure_ascii=False),
                 "es",
+                assignment["exam_id"],
+                version_id,
+                assignment["assignment_id"],
+                "A" if version_id == assignment["version_ids"][0] else "B",
             ),
         )
 
         for event_type, occurred_at, detail in event_specs:
             conn.execute(
-                "INSERT INTO integrity_events(attempt_id,event_type,occurred_at,detail_json) VALUES(?,?,?,?)",
+                "INSERT INTO integrity_events(attempt_id,event_type,occurred_at,detail_json) VALUES(%s,%s,%s,%s)",
                 (attempt_id, event_type, now_iso(occurred_at), json.dumps(detail, ensure_ascii=False)),
             )
 
     return len(all_students)
 
 
-def clean_demo(conn: sqlite3.Connection) -> None:
-    attempt_ids = [row["id"] for row in conn.execute("SELECT id FROM attempts WHERE id LIKE 'seed_attempt_%'").fetchall()]
-    if attempt_ids:
-        placeholders = ",".join("?" for _ in attempt_ids)
-        conn.execute(f"DELETE FROM integrity_events WHERE attempt_id IN ({placeholders})", attempt_ids)
-        conn.execute(f"DELETE FROM attempts WHERE id IN ({placeholders})", attempt_ids)
-    demo_exam_ids = [r["id"] for r in conn.execute("SELECT id FROM exams WHERE title LIKE 'SEED • %'").fetchall()]
+def clean_demo(conn: Any) -> None:
+    attempt_ids = delete_seed_attempts(conn)
+    demo_exam_ids = [r["id"] for r in conn.execute("SELECT id FROM exams WHERE title LIKE %s", ("SEED • %",)).fetchall()]
     if demo_exam_ids:
-        ph = ",".join("?" for _ in demo_exam_ids)
+        ph = ",".join("%s" for _ in demo_exam_ids)
         version_ids = [r["id"] for r in conn.execute(f"SELECT id FROM exam_versions WHERE exam_id IN ({ph})", demo_exam_ids).fetchall()]
         if version_ids:
-            vph = ",".join("?" for _ in version_ids)
+            vph = ",".join("%s" for _ in version_ids)
             conn.execute(f"DELETE FROM exam_version_questions WHERE version_id IN ({vph})", version_ids)
             conn.execute(f"DELETE FROM student_exam_allocations WHERE version_id IN ({vph})", version_ids)
         conn.execute(f"DELETE FROM exam_assignments WHERE exam_id IN ({ph})", demo_exam_ids)
         conn.execute(f"DELETE FROM exam_versions WHERE exam_id IN ({ph})", demo_exam_ids)
         conn.execute(f"DELETE FROM exams WHERE id IN ({ph})", demo_exam_ids)
-    conn.execute("DELETE FROM question_bank WHERE id LIKE 'seed_%'")
-    student_count = conn.execute("SELECT COUNT(*) AS n FROM students WHERE student_code LIKE 'SEED-%'").fetchone()["n"]
-    conn.execute("DELETE FROM students WHERE student_code LIKE 'SEED-%'")
+    conn.execute("DELETE FROM question_bank WHERE id LIKE %s", ("seed_%",))
+    student_count = conn.execute("SELECT COUNT(*) AS n FROM students WHERE student_code LIKE %s", ("SEED-%",)).fetchone()["n"]
+    conn.execute("DELETE FROM students WHERE student_code LIKE %s", ("SEED-%",))
     conn.commit()
     print(f"Removed {len(attempt_ids)} demo attempts, {student_count} demo students, and all seed_* questions.")
     print("Demo sections/subjects/categories were intentionally kept so manually added data remains safe.")
@@ -1058,13 +799,20 @@ def clean_demo(conn: sqlite3.Connection) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed Assessment Studio Universal with development data.")
+    parser.add_argument(
+        "--confirm-development-database",
+        action="store_true",
+        help="Required confirmation that DATABASE_URL targets a disposable development/test database.",
+    )
     parser.add_argument("--clean", action="store_true", help="Remove generated seed_* questions/attempts and exit.")
     parser.add_argument("--no-results", action="store_true", help="Create subjects/categories/questions only; do not create student results.")
     parser.add_argument("--keep-settings", action="store_true", help="Do not switch the current test to the demo English subject.")
     args = parser.parse_args()
+    if not args.confirm_development_database:
+        parser.error("--confirm-development-database is required because seed.py mutates PostgreSQL and writes demo audio")
 
     with connect() as conn:
-        ensure_schema(conn)
+        verify_schema(conn)
 
         if args.clean:
             clean_demo(conn)
@@ -1107,18 +855,18 @@ def main() -> None:
             upsert_setting(conn, "rules_updated_at", now_iso())
 
         roster = upsert_demo_roster(conn)
-        exam_count = seed_demo_exams(conn, subject_ids, teacher_ids)
+        exam_count, assignment_map = seed_demo_exams(conn, subject_ids, teacher_ids)
 
         attempt_count = 0
         if not args.no_results:
-            attempt_count = insert_demo_attempts(conn, subject_ids, category_ids, roster, teacher_ids)
+            attempt_count = insert_demo_attempts(conn, subject_ids, category_ids, roster, teacher_ids, assignment_map)
 
         conn.commit()
 
         category_count = len(category_ids)
         print("\nAssessment Studio seed complete")
         print("-" * 38)
-        print(f"Database:       {DB_PATH}")
+        print(f"Database:       {conn.info.dbname}")
         print(f"Subjects:       {len(subject_ids)}")
         print(f"Categories:     {category_count}")
         print(f"Questions:      {question_count}")
@@ -1129,7 +877,7 @@ def main() -> None:
         print(f"Demo results:   {attempt_count if not args.no_results else 0}")
         print("Demo login:     seed.a01@example.com / " + DEMO_PASSWORD)
         print("                 (all seed accounts use Demo1234)")
-        print("Listening WAV:  static/audio/seed_three_beeps.wav")
+        print(f"Listening WAV:  {AUDIO_DIR / 'seed_three_beeps.wav'}")
         if not args.keep_settings:
             print("Current subject: English")
         print("\nTeacher logins:")
@@ -1141,4 +889,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        close_pool()

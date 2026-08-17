@@ -11,7 +11,7 @@
 
 Assessment Studio es una aplicación institucional bilingüe para diseñar, asignar, resolver y calificar evaluaciones. Centraliza un padrón compartido de estudiantes y secciones, permite múltiples cuentas docentes y aísla por docente el banco de preguntas, los exámenes y los resultados.
 
-**Implementado:** Flask sirve HTML Jinja y endpoints internos; SQLite conserva configuración, contenido, asignaciones, snapshots, intentos, telemetría y penalizaciones. El navegador usa JavaScript vanilla para interacción y señales de integridad. No existe una API pública ni un servicio SaaS multiinstitución.
+**Implementado:** Flask sirve HTML Jinja y endpoints internos; PostgreSQL conserva configuración, contenido, asignaciones, snapshots, intentos, telemetría y penalizaciones. Psycopg usa pool acotado, Alembic versiona schema y Docker Compose opera app+DB con volúmenes separados. El navegador usa JavaScript vanilla para interacción y señales de integridad. No existe una API pública ni un servicio SaaS multiinstitución.
 
 ## Problema
 
@@ -21,7 +21,7 @@ Las evaluaciones gestionadas con archivos dispersos o formularios genéricos dif
 
 - Reutilización de preguntas por asignatura y categoría.
 - Múltiples exámenes y versiones con asignación fija o aleatoria balanceada.
-- Un intento por estudiante y asignación, reforzado en SQLite.
+- Un intento por estudiante y asignación, reforzado por índice único PostgreSQL y transacciones con locks de fila.
 - Snapshot inmutable de preguntas, política, idioma y contexto al iniciar.
 - Calificación automática de siete tipos de pregunta.
 - Resultados filtrables, PDF y exportación CSV/XLSX.
@@ -43,7 +43,7 @@ Las evaluaciones gestionadas con archivos dispersos o formularios genéricos dif
 
 **Implementado:** una institución lógica, varias cuentas docentes, padrón y catálogo compartidos, autenticación por correo y contraseña, interfaz global español/inglés, banco de preguntas, exámenes/versiones/asignaciones, intentos, calificación, listening con archivo o TTS, telemetría, penalizaciones y exportaciones.
 
-**Fuera de alcance actual:** multiinstitución real, inscripción docente-sección, ventanas de disponibilidad, recuperación autónoma de contraseñas, SSO, MFA, auditoría administrativa general, API pública, aplicación móvil nativa, pagos, PostgreSQL, colas de trabajo y alta disponibilidad.
+**Fuera de alcance actual:** multiinstitución real, inscripción docente-sección, ventanas de disponibilidad, recuperación autónoma de contraseñas, SSO, MFA, auditoría administrativa general, API pública, aplicación móvil nativa, pagos, colas de trabajo y alta disponibilidad.
 
 ## Principios del producto
 
@@ -59,7 +59,7 @@ Las evaluaciones gestionadas con archivos dispersos o formularios genéricos dif
 
 | Tema | Estado | Consecuencia |
 |---|---|---|
-| SQLite y proceso único | Implementado | Adecuado para despliegues pequeños; la concurrencia de escritura es limitada |
+| PostgreSQL + Gunicorn | Implementado | Workers concurrentes con pool acotado; requiere tuning y backup profesional |
 | Sesiones Flask con cookie firmada | Implementado | Requiere `SECRET_KEY` robusta y TLS en producción |
 | Archivos de audio locales | Implementado | Deben incluirse en respaldos y permisos del servidor |
 | CDN de SweetAlert2 | Implementado | La confirmación usa `window.confirm` si no hay red; el CSP permite `cdn.jsdelivr.net` |

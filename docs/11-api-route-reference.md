@@ -3,10 +3,17 @@
 | Campo | Valor |
 |---|---|
 | Estado | Verificado desde `app.app.url_map` y decorators |
-| Versión | 1.0 |
+| Versión | 1.1 |
 | Fecha | 2026-08-16 |
 
 No es una API pública. `Auth` indica sesión requerida; `Owner` indica validación de ownership/parent. `CSRF` aplica a mutaciones de formulario. GET/POST combinados solo mutan en POST. Salvo las excepciones indicadas, las rutas Teacher usan `teacher_required`; las rutas Admin usan `admin_required`, que incluye `teacher_required` y revalida cuenta activa.
+
+## Operación
+
+| Método | Ruta | Auth | Propósito |
+|---|---|---|---|
+| GET | `/health/live` | Pública | Liveness del proceso; no consulta DB |
+| GET | `/health/ready` | Pública | Readiness mediante `SELECT 1`; no migra ni expone configuración |
 
 ## Estudiante y resultados
 
@@ -23,8 +30,8 @@ No es una API pública. `Auth` indica sesión requerida; `Owner` indica validaci
 | GET | `/api/listening-script/<question_id>` | Student | Attempt/question own in progress | - | Script TTS on demand, JSON no-store |
 | POST | `/api/integrity-event` | Student | Attempt own in progress | No token | Evento JSON allowlisted |
 | POST | `/submit` | Student | Attempt own in progress | Sí | Validar/calificar/enviar |
-| GET | `/result/<attempt_id>` | Student o sesión teacher existente | Student owner o teacher owner | - | Sin `teacher_required`; teacher no revalida cuenta activa; timeline solo teacher |
-| GET | `/report/<attempt_id>.pdf` | Student o sesión teacher existente | Student owner o teacher owner | - | Sin `teacher_required`; teacher no revalida cuenta activa; PDF sin answers |
+| GET | `/result/<attempt_id>` | Student o teacher activo | Student owner o teacher owner | - | Rama teacher revalida cuenta activa; timeline solo teacher |
+| GET | `/report/<attempt_id>.pdf` | Student o teacher activo | Student owner o teacher owner | - | Rama teacher revalida cuenta activa; PDF sin answers |
 | POST | `/teacher/results/<attempt_id>/penalties` | Teacher | Attempt owner, submitted | Sí | Penalización manual |
 | POST | `/teacher/results/<attempt_id>/penalties/<int:penalty_id>/revoke` | Teacher | Attempt y penalty owner | Sí | Revocar penalización |
 
@@ -39,7 +46,7 @@ No es una API pública. `Auth` indica sesión requerida; `Owner` indica validaci
 | GET | `/teacher/export.csv` | Teacher | Attempts current teacher y filtros | - | CSV de resultados |
 | GET | `/teacher/export.xlsx` | Teacher | Attempts current teacher y filtros | - | XLSX Results + Integrity Events |
 
-**Gaps de seguridad conocidos:** el POST de login docente no verifica CSRF, a diferencia del login student; `/api/integrity-event` muta JSON sin token; y logout docente solo exige token cuando la marca de sesión teacher ya existe. Además, resultado/PDF validan teacher ownership pero no cuenta activa. Deben endurecerse sin confundir estas brechas con bypass de contraseña o cross-tenant ownership.
+**Gaps de seguridad conocidos:** el POST de login docente no verifica CSRF, a diferencia del login student; `/api/integrity-event` muta JSON sin token; y logout docente solo exige token cuando la marca de sesión teacher ya existe. Deben endurecerse sin confundir estas brechas con bypass de contraseña o cross-tenant ownership.
 
 ## Padrón compartido
 

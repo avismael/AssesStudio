@@ -3,15 +3,15 @@
 | Campo | Valor |
 |---|---|
 | Estado | Implementado/verificado contra archivos del repositorio |
-| Versión | 1.0 |
+| Versión | 2.0 |
 | Fecha | 2026-08-16 |
 
 ## Requisitos
 
 - Python 3 compatible con Flask 3.
 - Node.js solo para `node --check` de JavaScript.
-- Dependencias de `requirements.txt`: `Flask>=3.0,<4`, `openpyxl>=3.1,<4`, `reportlab>=4.0,<5`, `pytest>=8.0,<9`.
-- SQLite incluido en Python.
+- Dependencias de `requirements.txt`, incluidas Flask, psycopg 3/pool, Alembic, SQLAlchemy solo para migraciones, Gunicorn, exports y pytest.
+- PostgreSQL 17 recomendado; Docker Engine + Compose simplifican el entorno local.
 
 ## Instalación local
 
@@ -29,7 +29,7 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-También existen `run_linux_mac.sh` y `run_windows.bat`; ambos crean `.venv` si falta, instalan requisitos y ejecutan `python app.py`.
+`run_linux_mac.sh` y `run_windows.bat` requieren `DATABASE_URL`; instalan dependencias, ejecutan Alembic/bootstrap y arrancan el servidor Flask de desarrollo. No aprovisionan PostgreSQL. Preferir Compose para el runtime completo.
 
 ## Configuración
 
@@ -44,67 +44,77 @@ Exportar variables desde un entorno seguro; la aplicación no carga `.env` por s
 | `TEACHER_ADMIN_NAME` | `Administrator` | Bootstrap cuando `teachers` está vacía |
 | `TEACHER_ADMIN_EMAIL` | `admin@assessment.local` | Login bootstrap |
 | `TEACHER_ADMIN_PASSWORD` | `ChangeMe123` | Clave bootstrap de desarrollo |
-| `DATABASE_PATH` | `data/results.db` | Ruta SQLite alternativa |
+| `DATABASE_URL` | obligatorio | DSN PostgreSQL canónico |
+| `AUDIO_DIR` | `static/audio` | Directorio de uploads; `/app/static/audio` en Compose |
+| `SESSION_COOKIE_SECURE` | `1` | Cookie solo HTTPS; usar `0` únicamente en HTTP local aislado |
+| `SESSION_COOKIE_SAMESITE` | `Lax` | `Lax`, `Strict` o `None`; `None` requiere cookie segura |
+| `DB_POOL_MIN_SIZE` / `DB_POOL_MAX_SIZE` | `1` / `10` | Pool psycopg acotado por proceso |
+| `DB_POOL_TIMEOUT` | `10` | Espera máxima por conexión |
+| `GUNICORN_WORKERS` / `GUNICORN_THREADS` | `2` / `4` | Concurrencia del contenedor |
+| `GUNICORN_TIMEOUT` | `60` | Timeout de worker |
 
 Ejemplo seguro para una DB temporal:
 
 ```bash
-export DATABASE_PATH=/tmp/assessment-studio-dev.db
+export DATABASE_URL=postgresql://assessment:password@127.0.0.1:5432/assessment_dev
 export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+export SESSION_COOKIE_SECURE=0  # solo para este servidor HTTP local
 export TEACHER_ADMIN_NAME="Local Administrator"
 export TEACHER_ADMIN_EMAIL="local-admin@example.invalid"
 export TEACHER_ADMIN_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
+alembic upgrade head
+python bootstrap.py
 flask --app app run --host 127.0.0.1 --port 5000
 ```
 
-Estas variables deben existir antes del primer import/startup porque `init_db()` puede crear el bootstrap admin durante el import. No usar credenciales demo, placeholders ni defaults públicos con datos reales. `python app.py` enlaza `0.0.0.0`; limitar a `127.0.0.1` en desarrollo aislado evita exposición accidental.
+Importar `app.py` no crea esquema ni defaults. `bootstrap.py` debe ejecutarse después de la migración. No usar credenciales demo, placeholders ni defaults públicos con datos reales.
+
+`POSTGRES_PASSWORD` es texto raw para PostgreSQL. Si la contraseña contiene caracteres reservados como `@`, `:`, `/`, `%`, `#` o `?`, percent-encodearla al construir `DATABASE_URL`; no interpolar el valor raw dentro de una URI. Compose exige `DATABASE_URL` explícita para evitar esa ambigüedad.
 
 ## Inicialización y migraciones
 
-Importar/ejecutar `app.py` llama `init_db()` automáticamente. La función:
+El esquema se gestiona exclusivamente con Alembic:
 
-1. Crea directorios DB/audio.
-2. Crea tablas ausentes.
-3. Inspecciona columnas con `PRAGMA table_info`.
-4. Añade columnas mediante `ALTER TABLE ... ADD COLUMN`.
-5. Crea bootstrap admin si no hay docentes.
-6. Backfillea ownership legacy al primer docente.
-7. Migra algunos campos legacy y crea índices/settings.
+```bash
+alembic current
+alembic upgrade head
+alembic downgrade -1  # solo si el downgrade fue probado y es seguro
+python bootstrap.py
+```
+
+El entrypoint de Docker ejecuta upgrade y bootstrap una sola vez antes de Gunicorn. Readiness nunca migra.
 
 Para añadir una migración:
 
-1. Definir el DDL de instalación nueva en `init_db()`.
-2. Añadir comprobación de columna/índice para instalaciones existentes.
-3. Mantener `seed.py:ensure_schema()` en paridad.
-4. Añadir prueba de esquema y migración sobre DB legacy representativa.
+1. Crear una revisión bajo `migrations/versions/`.
+2. Definir upgrade y downgrade explícitos; probar ambos cuando el downgrade sea viable.
+3. Mantener `seed.py` como consumidor del esquema, nunca como initializer.
+4. Añadir prueba sobre una base PostgreSQL vacía y, para revisiones futuras, desde la revisión anterior.
 5. Actualizar [modelo de datos](06-data-model.md), ADR si cambia una frontera y changelog.
 6. Evitar DROP/recreate sin plan explícito y respaldo.
 
 ## Seed
 
 ```bash
-python seed.py
-python seed.py --no-results
-python seed.py --keep-settings
-python seed.py --clean
+python seed.py --confirm-development-database
+python seed.py --confirm-development-database --no-results
+python seed.py --confirm-development-database --keep-settings
+python seed.py --confirm-development-database --clean
 ```
 
 - Crea cuatro docentes demo, tres subjects, nueve categories, 19 questions, tres sections, 15 students, tres exams con dos versions y assignments.
 - Sin `--no-results`, crea 15 attempts demo y eventos.
 - Es reejecutable para filas seed; `--clean` elimina datos generados y conserva catálogo/secciones.
 - Imprime credenciales demo intencionales al terminal. Ver [README raíz](../README.md#datos-demo), no reutilizarlas en producción.
-- Siempre modifica `DATABASE_PATH` (o `data/results.db` por default), recrea passwords/cuentas seed y escribe `static/audio/seed_three_beeps.wav`; `--no-results` no lo convierte en check read-only.
+- Requiere `DATABASE_URL`, revisión Alembic actual y confirmación explícita; recrea passwords/cuentas seed y escribe en `AUDIO_DIR`. `--no-results` no lo convierte en check read-only.
 
-Para validar el seed sin tocar la DB ni el audio del workspace actual, ejecutar desde una copia temporal. El `DATABASE_PATH` separado aísla SQLite y la copia aísla el `AUDIO_DIR`, que no tiene variable de entorno propia:
+Para validar el seed, usar una base PostgreSQL dedicada cuyo nombre indique test y un directorio de audio temporal:
 
 ```bash
-tmp_root="$(mktemp -d)"
-trap 'rm -rf "$tmp_root"' EXIT
-cp -a . "$tmp_root/qquizz"
-(
-  cd "$tmp_root/qquizz"
-  DATABASE_PATH="$tmp_root/seed-validation.db" python seed.py --no-results
-)
+tmp_audio="$(mktemp -d)"
+DATABASE_URL=postgresql://assessment:password@127.0.0.1:5432/assessment_seed_test alembic upgrade head
+DATABASE_URL=postgresql://assessment:password@127.0.0.1:5432/assessment_seed_test \
+  AUDIO_DIR="$tmp_audio" python seed.py --confirm-development-database --no-results
 ```
 
 No ejecutar seed contra una DB de producción ni contra el workspace/default DB solo para validación.
@@ -120,9 +130,11 @@ Abrir `http://127.0.0.1:5000`. El servidor incluido es de desarrollo; producció
 ## Estructura
 
 ```text
-app.py                 rutas, esquema, auth, dominio, import/export
+app.py                 rutas, bootstrap de defaults, auth, dominio, import/export
+database.py            pool psycopg y transacciones
+migrations/            esquema PostgreSQL versionado
 policy_defaults.py     reglas canónicas dependency-free
-seed.py                fixtures y schema bootstrap alternativo
+seed.py                fixtures de desarrollo; requiere schema Alembic actual
 templates/             vistas Jinja
 static/css/             diseño responsive y tokens
 static/js/exam.js       interacción del examen y telemetría
@@ -186,26 +198,19 @@ python -m py_compile app.py seed.py policy_defaults.py
 node --check static/js/exam.js
 node --check static/js/ui.js
 node --check static/js/student_guard.js
-pytest -q
+TEST_DATABASE_URL=postgresql://assessment:password@127.0.0.1:5432/assessment_test pytest -q
 ```
 
-Opcional, únicamente con aislamiento completo de DB y workspace/audio:
-
-```bash
-tmp_root="$(mktemp -d)"
-trap 'rm -rf "$tmp_root"' EXIT
-cp -a . "$tmp_root/qquizz"
-(cd "$tmp_root/qquizz" && DATABASE_PATH="$tmp_root/seed-validation.db" python seed.py --no-results)
-```
+El `conftest.py` falla antes de importar la app si falta `TEST_DATABASE_URL` o si el nombre no usa un límite explícito `test_`/`_test`. Al iniciar, recrea únicamente el schema `public` de esa base dedicada y ejecuta Alembic/bootstrap.
 
 El resultado de la verificación de esta edición se registra en [09 - Calidad](09-quality-strategy.md#resultado-de-la-verificación-documental).
 
 ## Debugging
 
-- Usar `DATABASE_PATH` separada para pruebas manuales destructivas.
+- Usar base/usuario PostgreSQL separados para pruebas manuales destructivas.
 - Trazar route -> helper -> SQL -> template/JS.
 - Comprobar sesión, CSRF, estado/archivo y ownership antes de alterar lógica.
-- Para esquema: `PRAGMA table_info`, `PRAGMA index_list`, `PRAGMA foreign_key_check`.
+- Para esquema: `alembic current`, `\d`/catálogo `information_schema`, `pg_indexes` y consultas de FKs en `pg_catalog`.
 - Para i18n: alternar globalmente desde Setup y probar intento ya iniciado.
 - Para drafts: revisar `AS_SERVER_DRAFT` y key `assessment-studio:<attempt_id>` en localStorage.
 

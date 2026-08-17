@@ -8,7 +8,7 @@
 
 ## ADR-001 - Monolito Flask con SQLite
 
-**Estado:** Aceptado.
+**Estado:** Superseded por ADR-011. Flask/Jinja monolítico permanece; SQLite no.
 
 **Contexto:** se requiere una aplicación local/institucional simple, server-rendered y con pocas dependencias operativas.
 
@@ -40,7 +40,7 @@
 
 **Decisión:** persistir allocation por student/assignment; para random elegir con `secrets.choice` entre versiones usables de menor conteo.
 
-**Consecuencias:** estabilidad ante refresh y distribución aproximada uniforme. No garantiza balance perfecto bajo starts concurrentes sin aislamiento más fuerte; unique evita doble allocation persistida.
+**Consecuencias:** estabilidad ante refresh y distribución uniforme por assignment. PostgreSQL serializa el tramo de asignación con `FOR UPDATE`; unique evita doble allocation persistida.
 
 ## ADR-005 - Validación de respuestas canónica en servidor
 
@@ -84,11 +84,29 @@
 
 ## ADR-010 - Migraciones aditivas in-process
 
-**Estado:** Aceptado para fase actual.
+**Estado:** Superseded por ADR-011.
 
 **Decisión:** `init_db()` crea y añade columnas/índices al startup; no hay migration framework.
 
 **Consecuencias:** upgrades simples y legacy preservado. No existe historial versionado ni rollback; FKs no pueden añadirse retroactivamente con el patrón actual. Una evolución destructiva requiere herramienta/plan dedicado.
+
+## ADR-011 - PostgreSQL canónico y migraciones Alembic
+
+**Estado:** Aceptado e implementado.
+
+**Contexto:** SQLite y DDL al importar limitaban concurrencia, hacían carreras de startup posibles y duplicaban schema entre app/seed. La migración parte de una base PostgreSQL vacía; no se requiere importar SQLite.
+
+**Decisión:** PostgreSQL es el único runtime. `database.py` expone psycopg 3 con pool acotado y filas dict. Alembic es la única autoridad DDL. El entrypoint ejecuta migraciones antes de Gunicorn y `bootstrap.py` crea defaults/admin bajo advisory lock. `seed.py` exige una revisión actual y no crea schema.
+
+**Consecuencias:** transacciones/locks e índices soportan workers concurrentes; hay historial versionado y una frontera de conexiones explícita. PostgreSQL pasa a ser dependencia operativa obligatoria. Los timestamps y JSON snapshot siguen en TEXT para preservar comportamiento; JSONB/timestamptz serían migraciones futuras, no cambios cosméticos.
+
+## ADR-012 - Contenedores y persistencia separada
+
+**Estado:** Aceptado e implementado.
+
+**Decisión:** `compose.yaml` ejecuta app+PostgreSQL, sin puerto público de DB, con healthchecks y volúmenes nombrados `postgres_data`/`uploaded_audio`. Gunicorn se ajusta por entorno.
+
+**Consecuencias:** recrear contenedores conserva DB/audio y el arranque es reproducible. Los volúmenes NO son backup; operación debe usar `pg_dump` y copia externa/verificada del audio. El audio continúa siendo estático URL-addressable hasta una decisión separada de media privada.
 
 ## Gobierno de ADRs
 

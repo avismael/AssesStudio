@@ -2,55 +2,66 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | Runtime actual implementado; producción recomendada |
-| Versión | 1.0 |
+| Estado | Runtime PostgreSQL + Docker Compose + Gunicorn implementado |
+| Versión | 2.0 |
 | Fecha | 2026-08-16 |
 
 ## Runtime actual
 
-**Implementado:** `python app.py` ejecuta el servidor de desarrollo Flask en `0.0.0.0:$PORT`. SQLite reside en `DATABASE_PATH` o `data/results.db`; audio en `static/audio`; CSS/JS/iconos son estáticos locales, excepto SweetAlert2 opcional desde CDN. Todo archivo de `static/audio` es URL-addressable sin autenticación si se conoce su nombre; el storage actual no ofrece confidencialidad por sesión/attempt.
+**Implementado:** `compose.yaml` levanta `app` y PostgreSQL 17. La DB no publica puerto. `docker-entrypoint.sh` ejecuta `alembic upgrade head` con retry acotado ante la transición inicial de PostgreSQL, `bootstrap.py` y luego Gunicorn. Un error persistente de migración detiene el contenedor. `postgres_data` persiste DB y `uploaded_audio` persiste `/app/static/audio`. Todo audio sigue siendo URL-addressable si se conoce el nombre; persistencia no cambia esa frontera de confidencialidad.
 
-Este runtime es apropiado para desarrollo, no para producción.
+```bash
+cp .env.example .env
+# Reemplazar todos los secretos placeholder.
+docker compose config --quiet
+docker compose up -d --build --wait
+docker compose ps
+docker compose logs app db
+```
 
-## Topología recomendada
+Para inspección sin publicar PostgreSQL: `docker compose exec db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"`. Para detener conservando datos: `docker compose down`. No usar `docker compose down -v` salvo eliminación deliberada y autorizada de ambos volúmenes. El puerto de la app se publica en `127.0.0.1` por default mediante `APP_BIND_IP`; exponer otra interfaz requiere una decisión explícita y el proxy/firewall correspondiente.
+
+## Topología implementada
 
 ```mermaid
 flowchart LR
     Client[Browsers] -->|HTTPS| Proxy[Reverse proxy TLS]
     Proxy --> WSGI[Servidor WSGI]
     WSGI --> Flask[Assessment Studio]
-    Flask --> DB[(Volumen SQLite)]
-    Flask --> Audio[(Volumen audio)]
+    Flask --> DB[(PostgreSQL postgres_data)]
+    Flask --> Audio[(uploaded_audio)]
     Backup[Backup cifrado] <-->|copias verificadas| DB
     Backup <-->|copias verificadas| Audio
     Monitor[Logs y health checks] --> Proxy
     Monitor --> WSGI
 ```
 
-### Recomendaciones
+### Producción
 
 - Reverse proxy Nginx/Caddy/Apache con TLS, límites y headers.
-- WSGI como Gunicorn/Waitress según plataforma; validar estrategia de workers con SQLite.
-- Un volumen persistente con permisos mínimos para DB y audio.
+- Mantener `SESSION_COOKIE_SECURE=1` detrás de TLS. El valor `0` de `.env.example` existe exclusivamente para probar por HTTP en loopback y no debe llegar a producción.
+- Gunicorn ya está incluido; ajustar workers/threads contra CPU, RAM y límite de conexiones.
+- Mantener volúmenes con permisos mínimos y backups externos verificados.
 - Static servido por proxy o Flask según escala, preservando CSP. Esto mantiene público `static/audio`; no delegar ese directorio al static server si el audio debe ser confidencial.
 - Para audio confidencial, almacenarlo fuera de `static/` y entregarlo mediante endpoint Flask autorizado por sesión/attempt/question, o storage privado con URLs firmadas breves.
-- Un solo proceso escritor como baseline prudente; no escalar horizontalmente con DB local compartida sin rediseño.
+- Se permiten múltiples workers; cada proceso tiene su propio pool acotado. La suma `réplicas × workers × DB_POOL_MAX_SIZE` debe caber en `max_connections` dejando margen operativo.
 
 ## Configuración y secretos
 
-- Definir `SECRET_KEY`, bootstrap admin y `DATABASE_PATH` desde secret manager/systemd/container env.
+- Definir `SECRET_KEY`, bootstrap admin, `POSTGRES_PASSWORD` y `DATABASE_URL` desde secret manager/container env.
+- Tratar `POSTGRES_PASSWORD` como valor raw del contenedor y `DATABASE_URL` como una URI independiente. Percent-encodear caracteres reservados de la contraseña al construir la URI; Compose no interpola el password raw y rechaza un `DATABASE_URL` ausente.
 - `FLASK_DEBUG=0` en producción.
 - No registrar contraseñas, cookies, answers, scripts o payloads sensibles completos.
-- Configurar cookie `Secure`, `HttpOnly`, `SameSite` y vida de sesión explícita en código/config antes de producción.
+- La app configura `Secure` por default, `HttpOnly` siempre y `SameSite=Lax` por default; revisar esos valores y la vida de sesión para la topología productiva.
 - Cambiar bootstrap defaults antes del primer inicio; después se usan cuentas persistidas.
-- No exponer el primer startup a red: configurar `SECRET_KEY`, `TEACHER_ADMIN_NAME`, `TEACHER_ADMIN_EMAIL` y `TEACHER_ADMIN_PASSWORD` antes de importar la app y usar loopback hasta completar hardening.
+- Configurar `TEACHER_ADMIN_NAME`, `TEACHER_ADMIN_EMAIL` y `TEACHER_ADMIN_PASSWORD` antes del primer bootstrap. El entrypoint rechaza variables obligatorias ausentes.
 
 ## Permisos y almacenamiento
 
 | Recurso | Recomendación |
 |---|---|
-| DB | Usuario de servicio: read/write; otros: sin acceso |
-| Directorio DB | write para journal/locks y reemplazo de restore |
+| DB | Usuario de aplicación: privilegios sobre schema/tablas; PostgreSQL sin puerto público en Compose |
+| `postgres_data` | Persistencia del cluster; no editar archivos directamente |
 | Audio actual | write para app, read para servicio web; sin ejecución; URL pública si se conoce |
 | Audio confidencial recomendado | Fuera de `static`; read solo mediante app/storage privado después de autorización |
 | Código/static icons | read-only en runtime |
@@ -59,9 +70,9 @@ flowchart LR
 
 ## Health checks
 
-**Implementado:** no hay endpoint `/health` dedicado.
+**Implementado:** `GET /health/live` responde si Flask está vivo. `GET /health/ready` ejecuta `SELECT 1`; devuelve 503 si PostgreSQL no está disponible y nunca ejecuta migraciones. Compose usa `pg_isready` para DB y readiness HTTP para app.
 
-**Recomendado:** health interno que compruebe proceso y `SELECT 1`, sin exponer schema/config. Readiness debe fallar si DB no abre; liveness no debería ejecutar migraciones. Monitorear además espacio en disco, latencia, errores 5xx, locks SQLite y éxito de backup.
+Monitorear además latencia, errores 5xx, saturación del pool, conexiones PostgreSQL, locks/deadlocks, volumen/disco y éxito de backup.
 
 ## Logging y monitoreo
 
@@ -69,13 +80,13 @@ La app usa logging Flask principalmente para excepciones puntuales; no hay forma
 
 Recomendado registrar: timestamp UTC, request ID, route, status, duración, actor ID pseudonimizado, error class y eventos operativos. No registrar passwords, cookies, answer keys, policy text completo ni PII innecesaria.
 
-Alertas mínimas: picos 401/403/429/5xx, `database is locked`, fallo de backup, disco >80%, restore drill vencido y cambios de configuración/roles.
+Alertas mínimas: picos 401/403/429/5xx, pool timeout, deadlocks, conexiones >80%, fallo de backup, disco >80%, restore drill vencido y cambios de configuración/roles.
 
-## Capacidad y concurrencia SQLite
+## Capacidad y concurrencia PostgreSQL
 
-SQLite permite múltiples lecturas pero serializa escrituras. Starts, telemetría frecuente, submissions e imports compiten por write locks. No existe `busy_timeout`, WAL explícito, pooling ni benchmark en el código actual.
+**Implementado:** psycopg 3 usa un pool por proceso (`DB_POOL_MIN_SIZE=1`, `DB_POOL_MAX_SIZE=10`, `DB_POOL_TIMEOUT=10`). Start bloquea solo la fila de assignment durante allocation+snapshot; submit e integridad bloquean solo su attempt. Las transacciones permanecen cortas y los índices de unicidad son la última defensa.
 
-**Supuesto operativo:** institución pequeña con concurrencia moderada. Antes de ampliar, ejecutar carga realista con eventos de integridad, importaciones y submit simultáneos. Si los locks/latencia exceden objetivos, migrar a PostgreSQL mediante plan explícito; no montar SQLite en filesystem de red no compatible.
+**Recomendado:** comenzar con `GUNICORN_WORKERS=2`, `GUNICORN_THREADS=4`, pool máximo 10 y medir. No aumentar workers/pool sin calcular conexiones. Ejecutar carga con proporción realista de login/start, eventos, submit, dashboard y exports; medir p50/p95/p99, errores, espera de pool, locks, CPU/IO, crecimiento de WAL y tamaño de snapshots. Definir SLO institucional antes de aprobar escala.
 
 ## Backup
 
@@ -83,7 +94,7 @@ SQLite permite múltiples lecturas pero serializa escrituras. Starts, telemetrí
 
 Respaldar juntos:
 
-- `data/results.db` o `DATABASE_PATH`;
+- dump lógico PostgreSQL (`pg_dump` custom format);
 - `static/audio/` excluyendo solo assets regenerables claramente identificados;
 - configuración de servicio/reverse proxy y secretos mediante su sistema seguro;
 - versión exacta del código desplegado.
@@ -91,11 +102,11 @@ Respaldar juntos:
 ### Procedimiento recomendado
 
 1. Registrar fecha, versión y responsable.
-2. Reducir/pausar escrituras o usar API de backup SQLite consistente.
-3. Crear copia de DB sin copiar un archivo activo de forma insegura.
+2. Ejecutar `pg_dump --format=custom --no-owner --file assessment.dump "$DATABASE_URL"` con credenciales de backup.
+3. Registrar checksum y versión PostgreSQL/Alembic.
 4. Copiar audio y manifiesto de hashes.
 5. Cifrar y transferir a destino separado.
-6. Verificar apertura, `PRAGMA integrity_check`, `PRAGMA foreign_key_check` y conteos básicos.
+6. Verificar `pg_restore --list`, restaurar en una DB aislada y comprobar Alembic/FKs/conteos/smokes.
 7. Probar restauración periódica en entorno aislado.
 
 ## Restauración
@@ -107,7 +118,7 @@ flowchart TD
     Preserve --> Select[Seleccionar backup y codigo compatibles]
     Select --> RestoreDB[Restaurar DB]
     Select --> RestoreAudio[Restaurar audio]
-    RestoreDB --> Check[Integrity y foreign key checks]
+     RestoreDB --> Check[Alembic FKs conteos]
     RestoreAudio --> Check
     Check --> Migrate[Ejecutar codigo y migraciones aditivas]
     Migrate --> Smoke[Smoke tests por rol]
@@ -115,7 +126,7 @@ flowchart TD
     Open --> Record[Registrar RPO RTO y hallazgos]
 ```
 
-No sobrescribir el estado fallido sin copia forense. Validar admin/teacher/student, allocation estable, resultado/PDF y audio.
+No sobrescribir el estado fallido sin copia forense. Crear DB vacía, restaurar con `createdb` + `pg_restore --clean --if-exists --no-owner --dbname ... assessment.dump`, restaurar audio, comprobar `alembic current`, health y smokes de admin/teacher/student/allocation/result/PDF/audio.
 
 El restore debe conservar nombres y referencias de audio, pero no debe reabrir tráfico confidencial mientras los archivos sigan públicamente servidos desde `static/audio`. Verificar con una solicitud sin sesión: en el estado actual una URL conocida responde; una futura migración a media privada debe negar esa solicitud y permitir solo el intento autorizado.
 
@@ -128,13 +139,13 @@ El restore debe conservar nombres y referencias de audio, pero no debe reabrir t
 3. Respaldar DB/audio y verificar restore.
 4. Detener escrituras.
 5. Desplegar código/dependencias.
-6. Iniciar una vez para `init_db()`.
-7. Ejecutar checks de integridad y smoke tests.
+6. Ejecutar `alembic upgrade head` y `python bootstrap.py` antes de Gunicorn (el entrypoint lo hace).
+7. Comprobar `/health/live`, `/health/ready`, versión Alembic y smoke tests.
 8. Abrir tráfico y monitorear.
 
 ### Rollback
 
-No asumir que código anterior entiende columnas/semántica nuevas. Si el cambio fue solo aditivo y compatible, volver a binario anterior puede ser viable. Para cambio de datos, restaurar backup completo y aceptar el RPO documentado. Toda migración destructiva necesita plan dedicado previo.
+No asumir que código anterior entiende schema nuevo. Usar downgrade Alembic solo si fue ensayado y declarado seguro; en otro caso restaurar dump+audio compatibles y aceptar el RPO. Toda migración destructiva necesita plan dedicado previo.
 
 ## Respuesta a incidentes
 

@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | Implementado; topología productiva marcada como recomendada |
-| Versión | 1.0 |
+| Estado | Implementado con PostgreSQL, Alembic y Docker Compose |
+| Versión | 2.0 |
 | Fecha | 2026-08-16 |
 | Decisiones | [ADRs](13-adrs.md) |
 
@@ -14,8 +14,8 @@ flowchart LR
     Student[Estudiante] -->|HTTPS HTML y formularios| System[Assessment Studio]
     Teacher[Docente] -->|HTTPS HTML y exportaciones| System
     Admin[Administrador] -->|HTTPS configuracion| System
-    System --> DB[(SQLite)]
-    System --> Audio[(static/audio URL-addressable)]
+    System --> DB[(PostgreSQL)]
+    System --> Audio[(volumen uploaded_audio)]
     Browser[Web Speech API del navegador] -. TTS opcional .-> Student
 ```
 
@@ -47,9 +47,9 @@ flowchart TB
     Routes --> Domain
     Routes --> Reports
     Routes --> I18N
-    Auth --> SQLite[(results.db)]
-    Domain --> SQLite
-    Reports --> SQLite
+    Auth --> PostgreSQL[(PostgreSQL)]
+    Domain --> PostgreSQL
+    Reports --> PostgreSQL
     Domain --> Files[(static audio)]
 ```
 
@@ -57,9 +57,11 @@ flowchart TB
 
 | Área | Responsabilidad |
 |---|---|
-| `app.py` | App Flask, esquema/migración, sesiones, auth, autorización, validación, grading, import/export |
+| `app.py` | App Flask, defaults post-migración, sesiones, auth, autorización, validación, grading, import/export |
+| `database.py` | Pool psycopg acotado, filas dict y frontera transaccional |
+| `migrations/` | Esquema PostgreSQL versionado por Alembic |
 | `policy_defaults.py` | Defaults de reglas compartidos por app y seed |
-| `seed.py` | Fixtures de desarrollo y esquema dependency-light reejecutable |
+| `seed.py` | Fixtures de desarrollo reejecutables; verifica migración y nunca crea esquema |
 | `templates/` | Presentación Jinja; no decide ownership ni respuesta correcta |
 | `static/js/exam.js` | Interacción de pregunta, draft local, navegación y telemetría |
 | `static/js/ui.js` | Navegación, modales, toasts, confirmaciones y formularios genéricos |
@@ -69,19 +71,19 @@ flowchart TB
 
 ## Ciclo de request
 
-1. Flask carga/crea la base mediante `init_db()` al importar `app.py`.
+1. El entrypoint ejecuta `alembic upgrade head` y `bootstrap.py` antes de iniciar Gunicorn; importar `app.py` no muta esquema.
 2. La ruta obtiene sesión y, cuando corresponde, pasa por `teacher_required` o `admin_required`.
 3. Las mutaciones de formularios llaman `verify_csrf()`, salvo los gaps actuales documentados abajo.
-4. La ruta vuelve a resolver IDs y ownership en SQLite.
+4. La ruta vuelve a resolver IDs y ownership en PostgreSQL.
 5. Las reglas de negocio se ejecutan en servidor.
 6. La respuesta renderiza Jinja, redirige, devuelve JSON o genera archivo.
 7. `add_security_headers()` agrega headers y `no-store` a superficies sensibles.
 
 ## Autenticación, sesión y CSRF
 
-Flask usa cookie de sesión firmada con `SECRET_KEY`. El login exitoso hace `session.clear()`, establece identidad/rol y genera token CSRF. Las contraseñas se verifican con Werkzeug. Las rutas decoradas con `teacher_required` vuelven a comprobar que la cuenta existe y está activa; `admin_required` incluye esa comprobación.
+Flask usa cookie de sesión firmada con `SECRET_KEY`, `HttpOnly`, `SameSite=Lax` y `Secure` por default. El login exitoso hace `session.clear()`, establece identidad/rol y genera token CSRF. Las contraseñas se verifican con Werkzeug. Las rutas decoradas con `teacher_required` vuelven a comprobar que la cuenta existe y está activa; `admin_required` incluye esa comprobación.
 
-El dashboard `/teacher` revalida manualmente la cuenta activa. En cambio, `GET /result/<attempt_id>` y `GET /report/<attempt_id>.pdf` no usan `teacher_required`: confían en `teacher_authenticated`/`teacher_id` ya presentes en sesión y comprueban ownership del attempt, pero no vuelven a consultar `teachers.is_active`. Es un gap conocido: una sesión docente desactivada todavía puede leer sus resultados/PDF hasta que pase por una ruta decorada, el dashboard o se invalide la sesión. El hardening recomendado es aplicar revalidación activa común sin perder ownership.
+El dashboard `/teacher` revalida manualmente la cuenta activa. `GET /result/<attempt_id>` y `GET /report/<attempt_id>.pdf` permiten alternativamente al student owner o al teacher owner; la rama docente consulta `teachers.is_active` en cada lectura y limpia una sesión de una cuenta desactivada antes de denegar acceso.
 
 El CSRF usa token aleatorio en sesión y comparación constante para formularios. La norma objetivo es POST+CSRF para toda mutación, pero el estado actual tiene tres excepciones explícitas: el POST de login `/teacher` no verifica token; `/api/integrity-event` acepta JSON sin token y valida sesión/attempt/student/estado/allowlist; `/teacher/logout` verifica CSRF solo cuando `teacher_authenticated` ya está en sesión y, sin esa marca, limpia la sesión sin token. Son gaps de hardening, no cumplimiento pleno de la norma.
 
@@ -97,7 +99,7 @@ El CSRF usa token aleatorio en sesión y comparación constante para formularios
 sequenceDiagram
     participant S as Student
     participant F as Flask
-    participant D as SQLite
+    participant D as PostgreSQL
     S->>F: POST start assignment
     F->>D: validar estudiante seccion examen reglas
     F->>D: buscar intento existente
@@ -106,7 +108,7 @@ sequenceDiagram
     else Primer inicio
         F->>D: buscar allocation
         alt Sin allocation random
-            F->>D: contar versiones menos asignadas
+            F->>D: lock assignment y contar versiones
             F->>D: insertar allocation estable
         end
         F->>D: leer preguntas de version
@@ -117,7 +119,7 @@ sequenceDiagram
 
 ### Asignación estable
 
-`choose_assignment_version()` primero busca `student_exam_allocations`. En modo fixed valida la versión. En modo random cuenta allocations por versión usable, toma el mínimo y usa `secrets.choice()` entre empates. `UNIQUE(assignment_id, student_id)` impide cambios posteriores.
+`start_assigned_exam()` bloquea la fila de `exam_assignments` con `FOR UPDATE` durante el tramo corto de allocation y snapshot. `choose_assignment_version()` reutiliza una allocation existente; en random cuenta versiones usables, toma el mínimo y usa `secrets.choice()` entre empates. La serialización por assignment mantiene el balance y `UNIQUE(assignment_id, student_id)` fija la versión ante requests duplicadas.
 
 ### Snapshot
 
@@ -133,7 +135,7 @@ La compatibilidad legacy de listening es intencional: si `data_json.listening_so
 
 ### Validación y grading
 
-El cliente guía y bloquea saltos hacia delante. El servidor es canónico: `validate_required_answers()` valida contra snapshot; solo después `score_attempt()` califica. En error se guarda draft y el estado sigue `in_progress`. En éxito, un único UPDATE establece scores, answers y `submitted`.
+El cliente guía y bloquea saltos hacia delante. El servidor es canónico: `validate_required_answers()` valida contra snapshot; solo después `score_attempt()` califica. Submit bloquea el attempt con `FOR UPDATE`; en error guarda draft y conserva `in_progress`; en éxito el UPDATE exige `status='in_progress'`. Posts concurrentes posteriores son idempotentes y redirigen al mismo resultado.
 
 ## i18n
 
@@ -147,7 +149,7 @@ El cliente guía y bloquea saltos hacia delante. El servidor es canónico: `vali
 
 ## Integridad y penalizaciones
 
-`exam.js` registra visibility, blur, pagehide, intentos bloqueados y salida de fullscreen. El servidor incrementa contadores y añade `integrity_events`. La vista docente empareja salida/retorno, humaniza tiempos y conserva payload técnico colapsado.
+`exam.js` registra visibility, blur, pagehide, intentos bloqueados y salida de fullscreen. El servidor bloquea el attempt, incrementa contadores mediante expresiones atómicas y añade `integrity_events` en la misma transacción. La vista docente empareja salida/retorno, humaniza tiempos y conserva payload técnico colapsado.
 
 No existe regla automática de descuento. El owner aplica puntos positivos con motivo y límite a la nota ajustada disponible. La revocación marca actor/fecha. `grade10` queda intacta y la proyección es `max(0, grade10 - sum(active points))`.
 
@@ -165,16 +167,17 @@ flowchart LR
     Flask --> Werkzeug[Werkzeug hashes y uploads]
     Flask --> Jinja[Jinja templates]
     App[app.py] --> Flask
-    App --> SQLite[sqlite3 stdlib]
+    App --> Psycopg[psycopg 3 pool]
+    Alembic --> PostgreSQL
     App --> Openpyxl[openpyxl XLSX]
     App --> ReportLab[ReportLab PDF]
-    Seed[seed.py] --> Stdlib[Python stdlib]
+    Seed[seed.py] --> Psycopg
     Tests[pytest] --> App
     Tests --> Openpyxl
 ```
 
 ## Runtime y despliegue
 
-**Implementado:** `python app.py` escucha `0.0.0.0:$PORT` con servidor de desarrollo Flask; DB y audio son archivos locales. Los archivos bajo `static/audio` son recursos estáticos URL-addressable, no almacenamiento privado.
+**Implementado:** `compose.yaml` ejecuta PostgreSQL 17 y la app bajo Gunicorn. El entrypoint migra y bootstrappea antes de workers; PostgreSQL no publica puerto. Los volúmenes nombrados `postgres_data` y `uploaded_audio` persisten datos y audio. `/health/live` comprueba proceso y `/health/ready` ejecuta solo `SELECT 1`.
 
-**Recomendado para producción:** navegador -> reverse proxy TLS -> servidor WSGI con un proceso/estrategia compatible con SQLite -> app -> volumen persistente para DB/audio. No usar el servidor de desarrollo. Consultar [Operaciones](10-operations-runbook.md).
+**Recomendado:** terminar TLS en un reverse proxy, externalizar secretos, automatizar backups/restores y ejecutar pruebas de carga representativas. Los archivos de audio siguen siendo recursos estáticos URL-addressable; el volumen aporta persistencia, no confidencialidad ni backup. Consultar [Operaciones](10-operations-runbook.md).

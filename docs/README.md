@@ -3,9 +3,9 @@
 | Campo | Valor |
 |---|---|
 | Estado | Implementado, con recomendaciones y roadmap identificados explícitamente |
-| Versión documental | 1.0 |
+| Versión documental | 2.0 |
 | Fecha de verificación | 2026-08-16 |
-| Autoridad técnica | `app.py`, `seed.py`, `policy_defaults.py`, `templates/`, `static/`, `tests/` |
+| Autoridad técnica | `app.py`, `database.py`, `migrations/`, `seed.py`, `compose.yaml`, `templates/`, `static/`, `tests/` |
 
 Esta carpeta describe el producto realmente implementado. Las etiquetas **Implementado**, **Recomendado**, **Supuesto** y **Roadmap** separan hechos comprobados de decisiones futuras. Ante una discrepancia, prevalece el código y debe corregirse la documentación en el mismo cambio.
 
@@ -18,6 +18,7 @@ Esta carpeta describe el producto realmente implementado. Las etiquetas **Implem
 | Arquitectura y seguridad | [Arquitectura](05-architecture.md) -> [Datos](06-data-model.md) -> [Seguridad](07-security-privacy.md) -> [ADRs](13-adrs.md) |
 | Desarrollo y QA | [Guía de desarrollo](08-development-guide.md) -> [Calidad](09-quality-strategy.md) -> [Referencia de rutas](11-api-route-reference.md) |
 | Operaciones | [Runbook](10-operations-runbook.md) -> [Diagramas](12-diagrams.md) -> [Seguridad](07-security-privacy.md) |
+| Usuarios finales | [Manuales por rol e importaciones](../userdirections/README.md) |
 
 ## Índice maestro
 
@@ -37,7 +38,7 @@ Esta carpeta describe el producto realmente implementado. Las etiquetas **Implem
 14. [13 - Registros de decisiones arquitectónicas](13-adrs.md)
 15. [14 - Glosario, gobierno y roadmap](14-glossary-governance-roadmap.md)
 
-También son normativos [AGENTS.md](../AGENTS.md), para invariantes de modificación, y [README.md](../README.md), como entrada operativa breve. Los changelogs históricos se enlazan desde el [índice de cambios](14-glossary-governance-roadmap.md#índice-de-cambios).
+Los procedimientos de uso están en [Manuales de usuario](../userdirections/README.md), sin duplicar la referencia técnica. También son normativos [AGENTS.md](../AGENTS.md), para invariantes de modificación, y [README.md](../README.md), como entrada operativa breve. Los changelogs históricos se enlazan desde el [índice de cambios](14-glossary-governance-roadmap.md#índice-de-cambios).
 
 ## Matriz de cobertura
 

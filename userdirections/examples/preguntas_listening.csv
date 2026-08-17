@@ -1,0 +1,2 @@
+Asignatura,Categoria,Tipo,Pregunta,Opciones,Respuesta,Pares,Orden,Tolerancia,SensibleMayusculas,Script,Audio,FuenteAudio,IdiomaVoz
+General,General,listening,"Escucha y selecciona el saludo.","Buenos días|Buenas noches|Hasta luego","Buenos días",,,,,"La expresión es: Buenos días.",,tts,es-MX

@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | Estado | Cobertura actual verificada; ampliaciones recomendadas |
-| Versión | 1.0 |
+| Versión | 2.0 |
 | Fecha | 2026-08-16 |
 
 ## Objetivos
@@ -19,11 +19,12 @@
 |---|---|---|
 | Estático | Implementado | `py_compile`, `node --check`, inspección de keys/iconos |
 | Unitario | Implementado | scoring, validación required, formatting de integridad |
-| Integración Flask/SQLite | Implementado | login, start, submit, roles, penalties, exports |
+| Integración Flask/PostgreSQL | Implementado | login, start, submit, roles, penalties, exports |
 | Render/contrato HTML | Implementado | nav móvil, sprite, tablas responsivas, privacidad timeline |
 | E2E browser | No implementado | Recomendado con Playwright/Selenium |
 | Accesibilidad automatizada | No implementado | Recomendado con axe en E2E |
-| Carga/concurrencia | No implementado | Recomendado antes de ampliar uso |
+| Concurrencia focalizada | Implementado | starts duplicados/múltiples, balance y submit idempotente con threads reales |
+| Carga sostenida | No implementado | Recomendado antes de ampliar uso |
 
 ## Capacidades automatizadas actuales
 
@@ -51,11 +52,11 @@ No se fija aquí un conteo de tests porque cambia con frecuencia. La fuente esta
 ## Vacíos prioritarios
 
 1. Nested-route IDOR negativo para cada operación de exam/version/assignment/question.
-2. Login throttling/cookie flags y seguridad de sesión en entorno de producción.
-3. Race real de dos starts simultáneos y lock/concurrency SQLite.
+2. Login throttling, expiración de sesión y validación de cookies detrás del proxy TLS productivo.
+3. Prueba de carga sostenida con mezcla de starts, telemetría, submits, imports y exports.
 4. HTML completo sin answer/script para cada tipo.
 5. CSV formula injection y validación MIME/audio.
-6. Migrations desde fixtures legacy y paridad DDL app/seed.
+6. Upgrade/downgrade de cada migración futura desde la revisión anterior.
 7. E2E de modales, focus trap, navegación, localStorage y fullscreen.
 8. Accessibility con lector de pantalla/axe y contraste.
 9. PDF multilenguaje con caracteres no ASCII y textos largos.
@@ -118,7 +119,7 @@ No se fija aquí un conteo de tests porque cambia con frecuencia. La fuente esta
 | Compilación | `py_compile` y tres `node --check` pasan |
 | Tests | `pytest -q` pasa sin fallos |
 | Invariantes | Sin answer/script, one attempt, allocation/snapshot estable, tenancy |
-| Datos | Migración aditiva probada; backup previo definido |
+| Datos | Alembic sobre PostgreSQL vacío y revisión anterior; backup previo definido |
 | UX | Matriz manual del área afectada en tres viewports |
 | Seguridad | Review de método, CSRF, rol, ownership y datos sensibles |
 | Docs | Ruta/schema/comportamiento/changelog actualizados |
@@ -143,7 +144,7 @@ No se fija aquí un conteo de tests porque cambia con frecuencia. La fuente esta
 | Validación/grading | FR-016..018 | UC-S06..S08 | answer hidden, parametrized required, submit |
 | Integridad/equidad | FR-019..022 | UC-I01..I03 | event presentation, owner-only, penalty audit |
 | UI responsive | NFR-UX/A11Y | todas las journeys | nav/table markup; falta E2E/axe |
-| Operación/datos | NFR-REL/OPS | UC-O | schema tests; falta restore/concurrency |
+| Operación/datos | NFR-REL/OPS | UC-O | schema tests y concurrencia focalizada; falta restore/carga sostenida |
 
 ## Resultado de la verificación documental
 
@@ -153,7 +154,8 @@ Ejecución del 2026-08-16 sobre el working tree documentado:
 - `node --check static/js/exam.js`: pass.
 - `node --check static/js/ui.js`: pass.
 - `node --check static/js/student_guard.js`: pass.
-- `pytest -q`: pass; consultar la salida del run para el conteo vigente.
-- Seed aislado desde copia `mktemp`, con `DATABASE_PATH` temporal y audio escrito solo dentro de la copia: pass; SHA-256 normalizado del workspace completo idéntico antes/después. Ver el [comando seguro exacto](08-development-guide.md#seed).
+- `TEST_DATABASE_URL=postgresql://.../qquizz_test pytest -q`: pass, 69 tests; incluye migración/health, guard destructivo por nombre efectivo, agotamiento del pool, cookies, revocación de sesión docente y concurrencia threaded focalizada de start/allocation, submit y cap de penalizaciones. No equivale a una prueba de carga sostenida.
+- Seed completo sobre `qquizz_seed_test`, migrado con Alembic y `AUDIO_DIR` temporal, ejecutado dos veces con una penalización dependiente presente y luego con `--clean`: pass/re-runnable y FK-safe. La regresión de seed comprueba además que allocation, `attempt.exam_version_id` y los IDs del snapshot correspondan a la versión seleccionada incluso al corregir una allocation conflictiva en un rerun.
+- `docker compose config --quiet`, build, startup/health y recreación de contenedores: pass. Marcadores DB/audio persistieron en ambos volúmenes nombrados.
 - Checker Python de documentación: 23 archivos Markdown y 28 bloques Mermaid; destinos relativos, anchors, fences y tipos de bloque válidos.
 - `mermaid-cli`: no estaba instalado; no se añadió la dependencia. Se realizó validación estructural y revisión de sintaxis obvia.
