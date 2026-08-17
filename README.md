@@ -87,3 +87,4 @@ La estrategia, matriz manual y gates están en [docs/09-quality-strategy.md](doc
 - [Referencia completa de rutas](docs/11-api-route-reference.md)
 - [Diagramas](docs/12-diagrams.md)
 - [ADRs](docs/13-adrs.md) y [glosario, gobierno y roadmap](docs/14-glossary-governance-roadmap.md)
+# AssesStudio
