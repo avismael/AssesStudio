@@ -100,6 +100,8 @@ TRANSLATIONS_ES = {
     "Speech language": "Idioma de la voz", "Automatic / browser default": "Automático / predeterminado del navegador",
     "English (United States)": "Inglés (Estados Unidos)", "Spanish (Latin America)": "Español (Latinoamérica)", "Spanish (Spain)": "Español (España)",
     "Listening script": "Guion de listening", "Required when browser voice is selected.": "Obligatorio cuando se selecciona la voz del navegador.",
+    "Preview the audio before saving.": "Escucha el audio antes de guardar.",
+    "Select an audio file to test playback.": "Selecciona un archivo de audio para probar la reproducción.",
     "Browser voice is not supported on this device.": "La voz del navegador no es compatible con este dispositivo.",
     "Could not load the listening script.": "No se pudo cargar el guion de listening.",
     "Type your answer in the box.": "Escribe tu respuesta en el campo.", "Your answer": "Tu respuesta",
@@ -3313,7 +3315,7 @@ def teacher_catalog():
                FROM categories c JOIN subjects s ON s.id=c.subject_id
                LEFT JOIN question_bank q ON q.category_id=c.id AND q.teacher_id=%s AND q.is_archived=0
                WHERE c.is_archived=0 AND s.is_archived=0
-               GROUP BY c.id ORDER BY s.name,c.sort_order,c.name""", (teacher_id,)
+               GROUP BY c.id, s.id ORDER BY s.name,c.sort_order,c.name""", (teacher_id,)
         ).fetchall()
     return render_template("teacher_catalog.html", subjects=subjects, categories=categories)
 
@@ -3517,6 +3519,17 @@ def teacher_exam_detail(exam_id):
     with get_db() as conn:
         exam_row_data = exam_row(conn, exam_id)
         if not exam_row_data: abort(404)
+        exam_edit_meta = conn.execute(
+            """SELECT
+                   (SELECT COUNT(*) FROM exam_version_questions evq
+                    JOIN exam_versions v ON v.id=evq.version_id
+                    WHERE v.exam_id=%s AND v.is_active=1) AS selected_question_count,
+                   (SELECT COUNT(*) FROM exam_assignments a
+                    WHERE a.exam_id=%s AND a.is_active=1) AS assignment_count,
+                   (SELECT COUNT(*) FROM attempts t
+                    WHERE t.exam_id=%s AND t.status='submitted') AS submitted_count""",
+            (exam_id, exam_id, exam_id),
+        ).fetchone()
         versions = conn.execute(
             """SELECT v.*,COUNT(evq.question_id) AS question_count FROM exam_versions v
                LEFT JOIN exam_version_questions evq ON evq.version_id=v.id
@@ -3535,7 +3548,17 @@ def teacher_exam_detail(exam_id):
                WHERE a.exam_id=%s AND a.is_active=1 AND sec.is_archived=0 ORDER BY sec.name""", (exam_id,)
         ).fetchall()
         sections = conn.execute("SELECT * FROM sections WHERE is_archived=0 ORDER BY name ").fetchall()
-    return render_template("teacher_exam_detail.html", exam=exam_row_data, versions=versions, archived_versions=archived_versions, assignments=assignments, sections=sections)
+        subjects = conn.execute("SELECT * FROM subjects WHERE is_archived=0 ORDER BY name").fetchall()
+    return render_template(
+        "teacher_exam_detail.html",
+        exam=exam_row_data,
+        versions=versions,
+        archived_versions=archived_versions,
+        assignments=assignments,
+        sections=sections,
+        subjects=subjects,
+        exam_edit_meta=exam_edit_meta,
+    )
 
 
 @app.post("/teacher/exams/<int:exam_id>/edit")
@@ -3544,12 +3567,32 @@ def teacher_exam_edit(exam_id):
     verify_csrf()
     title=clean_name(request.form.get("title"),160)
     description=request.form.get("description","").strip()[:500]
+    try:
+        subject_id = int(request.form.get("subject_id", "0"))
+    except ValueError:
+        subject_id = 0
     if not title:
         flash_ui("Exam title is required.","error")
         return redirect(url_for("teacher_exam_detail",exam_id=exam_id))
     with get_db() as conn:
-        if not exam_row(conn,exam_id): abort(404)
-        conn.execute("UPDATE exams SET title=%s,description=%s,updated_at=%s WHERE id=%s",(title,description,now_iso(),exam_id)); conn.commit()
+        exam = exam_row(conn, exam_id)
+        if not exam: abort(404)
+        subject = conn.execute("SELECT id FROM subjects WHERE id=%s AND is_archived=0", (subject_id,)).fetchone()
+        if not subject:
+            flash_ui("Choose a valid subject.", "error")
+            return redirect(url_for("teacher_exam_detail", exam_id=exam_id))
+        submitted_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM attempts WHERE exam_id=%s AND status='submitted'",
+            (exam_id,),
+        ).fetchone()["n"]
+        if subject_id != int(exam["subject_id"]) and submitted_count:
+            flash_ui("You cannot change the subject after students have submitted results.", "error")
+            return redirect(url_for("teacher_exam_detail", exam_id=exam_id))
+        conn.execute(
+            "UPDATE exams SET subject_id=%s,title=%s,description=%s,updated_at=%s WHERE id=%s",
+            (subject_id, title, description, now_iso(), exam_id),
+        )
+        conn.commit()
     flash_ui("Exam updated.","success")
     return redirect(url_for("teacher_exam_detail",exam_id=exam_id))
 

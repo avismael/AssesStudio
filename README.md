@@ -23,6 +23,46 @@ docker compose up -d --build --wait
 
 Abrir `http://127.0.0.1:5000`. `.env.example` desactiva `SESSION_COOKIE_SECURE` únicamente para este HTTP local; producción debe usar TLS y valor `1`. Compose ejecuta migraciones Alembic y el bootstrap idempotente antes de Gunicorn. PostgreSQL no publica puerto; `postgres_data` y `uploaded_audio` son volúmenes persistentes. Un volumen NO es un backup.
 
+Para desarrollo local, `compose.override.yaml` monta el código fuente dentro del contenedor y activa `gunicorn --reload`, así que los cambios en la app se reflejan sin reconstruir la imagen.
+
+### Cómo ejecutar
+
+1. Crear y completar el archivo de variables de entorno:
+
+```bash
+cp .env.example .env
+```
+
+2. Levantar la base y la app:
+
+```bash
+docker compose up -d --build
+```
+
+3. Ver los logs de la app cuando haga falta:
+
+```bash
+docker compose logs -f app
+```
+
+4. Detener el entorno:
+
+```bash
+docker compose down
+```
+
+Con el override de desarrollo activo, los cambios del código se recargan automáticamente sin reconstruir la imagen.
+
+### Implementación Docker
+
+- `Dockerfile`: construye la imagen de la app con Python 3.13 slim, instala dependencias y deja listo el contenedor para producción.
+- `compose.yaml`: levanta `db` (PostgreSQL 17) y `app`, con red interna para la base y volúmenes persistentes para datos y audio.
+- `docker-entrypoint.sh`: espera a que la base esté lista, ejecuta `alembic upgrade head`, luego `python bootstrap.py` y finalmente arranca `gunicorn`.
+- Variables obligatorias: `DATABASE_URL`, `SECRET_KEY`, `TEACHER_ADMIN_EMAIL` y `TEACHER_ADMIN_PASSWORD`.
+- Variables recomendadas: `POSTGRES_PASSWORD`, `TEACHER_ADMIN_NAME`, `INSTITUTION_NAME`, `APP_HOST_PORT`, `GUNICORN_WORKERS`, `GUNICORN_THREADS`.
+
+Si querés operar en local con Docker, ese es el flujo soportado por el repositorio.
+
 ## Instalación local
 
 ```bash

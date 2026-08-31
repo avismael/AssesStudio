@@ -218,6 +218,39 @@ def _admin_client(csrf_token='admin-test-token'):
     return client
 
 
+def test_exam_edit_can_change_subject_before_results():
+    with app.get_db() as conn:
+        stamp = app.now_iso()
+        teacher_id = conn.execute('SELECT id FROM teachers ORDER BY id LIMIT 1').fetchone()['id']
+        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(910,'Editable Source','',0,%s,%s)", (stamp, stamp))
+        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(911,'Editable Target','',0,%s,%s)", (stamp, stamp))
+        exam_id = conn.execute(
+            """INSERT INTO exams(teacher_id,subject_id,title,description,is_published,is_archived,created_at,updated_at)
+               VALUES(%s,910,'Editable Exam','',0,0,%s,%s) RETURNING id""",
+            (teacher_id, stamp, stamp),
+        ).fetchone()['id']
+        conn.commit()
+
+    response = _teacher_client().post(
+        f'/teacher/exams/{exam_id}/edit',
+        data={
+            'csrf_token': 'teacher-test-token',
+            'subject_id': '911',
+            'title': 'Editable Exam v2',
+            'description': 'Edited subject',
+        },
+    )
+    assert response.status_code == 302
+    with app.get_db() as conn:
+        exam = conn.execute('SELECT subject_id,title,description FROM exams WHERE id=%s', (exam_id,)).fetchone()
+    assert exam['subject_id'] == 911
+    assert exam['title'] == 'Editable Exam v2'
+    assert exam['description'] == 'Edited subject'
+
+    html = _teacher_client().get(f'/teacher/exams/{exam_id}').get_data(as_text=True)
+    assert 'name="subject_id"' in html
+
+
 def test_bulk_student_csv_import_generates_email_from_nie():
     import io
     with app.get_db() as conn:
@@ -303,6 +336,15 @@ def test_clean_question_supports_browser_voice_without_exposing_script():
     assert cleaned['tts_lang'] == 'en-US'
     assert 'script' not in cleaned
     assert 'audio' not in cleaned
+
+
+def test_listening_question_editor_exposes_preview_controls():
+    html = _teacher_client().get('/teacher/questions/new').get_data(as_text=True)
+    assert 'id="previewListeningAudio"' in html
+    assert 'id="previewListeningTts"' in html
+    assert 'Preview the audio before saving.' in html
+    assert 'Select an audio file to test playback.' in html
+    assert 'id="listeningTtsSupportNotice"' in html
 
 
 def test_version_archive_and_restore_routes_exist():
