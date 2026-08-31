@@ -23,6 +23,7 @@ exec gunicorn \
   --workers "${GUNICORN_WORKERS:-2}" \
   --threads "${GUNICORN_THREADS:-4}" \
   --timeout "${GUNICORN_TIMEOUT:-60}" \
+  ${GUNICORN_RELOAD:+--reload} \
   --access-logfile - \
   --error-logfile - \
   --log-level "${GUNICORN_LOG_LEVEL:-info}" \
