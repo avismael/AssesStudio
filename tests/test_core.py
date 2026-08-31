@@ -347,6 +347,31 @@ def test_listening_question_editor_exposes_preview_controls():
     assert 'id="listeningTtsSupportNotice"' in html
 
 
+def test_order_question_editor_renders_without_dict_items_conflict():
+    with app.get_db() as conn:
+        stamp = app.now_iso()
+        teacher_id = conn.execute('SELECT id FROM teachers ORDER BY id LIMIT 1').fetchone()['id']
+        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(920,'Order Subject','',0,%s,%s)", (stamp, stamp))
+        conn.execute("INSERT INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(920,920,'Order Category','',0,0,%s,%s)", (stamp, stamp))
+        conn.execute(
+            """INSERT INTO question_bank
+               (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,is_active,is_archived,created_at,updated_at)
+               VALUES(%s,%s,920,920,'order','Order the steps',%s,%s,1,0,%s,%s)""",
+            (
+                'order_edit_test',
+                teacher_id,
+                '{"items":[["1","First"],["2","Second"],["3","Third"]]}',
+                '["1","2","3"]',
+                stamp,
+                stamp,
+            ),
+        )
+        conn.commit()
+
+    html = _teacher_client().get('/teacher/questions/order_edit_test/edit').get_data(as_text=True)
+    assert 'First\nSecond\nThird' in html
+
+
 def test_version_archive_and_restore_routes_exist():
     routes = {rule.rule for rule in app.app.url_map.iter_rules()}
     assert '/teacher/exams/<int:exam_id>/versions/<int:version_id>/archive' in routes

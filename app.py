@@ -2878,6 +2878,7 @@ def question_form_view(question=None):
             "tts_lang": data.get("tts_lang") or "auto",
             "choices": data.get("choices", []), "items": data.get("items", []), "pairs": pairs,
             "answer": answer, "case_sensitive": bool(data.get("case_sensitive", False)),
+            "order_items_text": "\n".join(item[1] for item in data.get("items", [])) if question["type"] == "order" else "",
         }
     return render_template(
         "question_form.html", question=form_question, type_labels=localized_type_labels(),
