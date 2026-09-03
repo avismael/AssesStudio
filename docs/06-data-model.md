@@ -78,11 +78,11 @@ Propósito: padrón y credenciales compartidas.
 
 ### `subjects`
 
-Propósito: catálogo institucional. Columnas: `id` BIGSERIAL PK; `name` CITEXT NOT NULL UQ; `description` TEXT; `is_archived` INTEGER NOT NULL default 0; `created_at`, `updated_at` TEXT NOT NULL.
+Propósito: catálogo propio del docente. Columnas: `id` BIGSERIAL PK; `teacher_id` BIGINT NOT NULL FK -> `teachers.id`; `name` CITEXT NOT NULL; `description` TEXT; `is_archived` INTEGER NOT NULL default 0; `created_at`, `updated_at` TEXT NOT NULL; UQ (`teacher_id`, `name`).
 
 ### `categories`
 
-Propósito: clasificación por subject. Columnas: `id` BIGSERIAL PK; `subject_id` BIGINT NOT NULL FK -> `subjects.id`; `name` CITEXT NOT NULL; `description` TEXT; `sort_order` INTEGER NOT NULL default 0; `is_archived` INTEGER NOT NULL default 0; `created_at`, `updated_at` TEXT NOT NULL; UQ (`subject_id`, `name`).
+Propósito: clasificación por subject dentro del catálogo de un docente. Columnas: `id` BIGSERIAL PK; `teacher_id` BIGINT NOT NULL FK -> `teachers.id`; `subject_id` BIGINT NOT NULL FK -> `subjects.id`; `name` CITEXT NOT NULL; `description` TEXT; `sort_order` INTEGER NOT NULL default 0; `is_archived` INTEGER NOT NULL default 0; `created_at`, `updated_at` TEXT NOT NULL; UQ (`teacher_id`, `subject_id`, `name`).
 
 ### `question_bank`
 

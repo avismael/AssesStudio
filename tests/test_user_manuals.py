@@ -39,18 +39,30 @@ def upload_for(path, payload=None):
 def teacher_client(csrf_token="manual-test-token"):
     client = app.app.test_client()
     with app.get_db() as conn:
-        teacher = conn.execute("SELECT id FROM teachers WHERE is_active=1 ORDER BY id LIMIT 1").fetchone()
+        teacher = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()
     with client.session_transaction() as session:
         session.update(teacher_authenticated=True, teacher_id=teacher["id"], csrf_token=csrf_token)
     return client, teacher["id"]
 
 
-def general_catalog(conn):
+def admin_client(csrf_token="manual-test-token"):
+    client = app.app.test_client()
+    with app.get_db() as conn:
+        admin = conn.execute("SELECT id FROM teachers WHERE role='admin' AND is_active=1 ORDER BY id LIMIT 1").fetchone()
+    with client.session_transaction() as session:
+        session.update(teacher_authenticated=True, teacher_id=admin["id"], csrf_token=csrf_token)
+    return client, admin["id"]
+
+
+def general_catalog(conn, teacher_id=None):
+    if teacher_id is None:
+        teacher_id = conn.execute("SELECT id FROM teachers WHERE is_active=1 ORDER BY id LIMIT 1").fetchone()["id"]
     return conn.execute(
         """SELECT subjects.id AS subject_id,categories.id AS category_id
-           FROM subjects JOIN categories ON categories.subject_id=subjects.id
+           FROM subjects JOIN categories ON categories.subject_id=subjects.id AND categories.teacher_id=subjects.teacher_id
            WHERE subjects.name='General' AND categories.name='General'
-             AND subjects.is_archived=0 AND categories.is_archived=0"""
+             AND subjects.teacher_id=%s AND subjects.is_archived=0 AND categories.is_archived=0""",
+        (teacher_id,)
     ).fetchone()
 
 
@@ -101,7 +113,7 @@ def test_student_example_import_route_inserts_rows_and_archived_values_remain_un
         ).fetchone()["id"]
         conn.commit()
 
-    client, _ = teacher_client()
+    client, _ = admin_client()
     response = client.post(
         "/teacher/students/import",
         data={
@@ -230,6 +242,44 @@ def test_inactive_non_archived_question_is_currently_selectable_into_version():
             (version_id, question_id),
         ).fetchone()
     assert selected is not None
+
+
+def test_teacher_catalog_subject_cards_open_a_category_view():
+    client, teacher_id = admin_client()
+    with app.get_db() as conn:
+        stamp = app.now_iso()
+        subject_a = conn.execute(
+            """INSERT INTO subjects(teacher_id,name,description,is_archived,created_at,updated_at)
+               VALUES(%s,'Catalog Route Alpha','',0,%s,%s) RETURNING id""",
+            (teacher_id, stamp, stamp),
+        ).fetchone()["id"]
+        subject_b = conn.execute(
+            """INSERT INTO subjects(teacher_id,name,description,is_archived,created_at,updated_at)
+               VALUES(%s,'Catalog Route Beta','',0,%s,%s) RETURNING id""",
+            (teacher_id, stamp, stamp),
+        ).fetchone()["id"]
+        conn.execute(
+            "INSERT INTO categories(teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(%s,%s,'Alpha Category','',0,0,%s,%s)",
+            (teacher_id, subject_a, stamp, stamp),
+        )
+        conn.execute(
+            "INSERT INTO categories(teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(%s,%s,'Beta Category','',0,0,%s,%s)",
+            (teacher_id, subject_b, stamp, stamp),
+        )
+        conn.commit()
+
+    index = client.get('/teacher/catalog')
+    index_body = index.get_data(as_text=True)
+    assert index.status_code == 200
+    assert 'Catalog Route Alpha' in index_body
+    assert 'Alpha Category' not in index_body
+
+    response = client.get(f"/teacher/catalog/subject/{subject_b}")
+    body = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert 'Catalog Route Beta' in body
+    assert 'Beta Category' in body
+    assert 'Alpha Category' not in body
 
 
 def test_manual_markdown_relative_links_resolve():

@@ -145,7 +145,7 @@ def verify_schema(conn) -> None:
         row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
     except Exception as exc:
         raise RuntimeError("Database schema is missing; run 'alembic upgrade head' before seed.py") from exc
-    if not row or row["version_num"] != "20260816_0001":
+    if not row or row["version_num"] != "20260902_0001":
         raise RuntimeError("Database schema is not current; run 'alembic upgrade head' before seed.py")
 
 def upsert_demo_teachers(conn: Any) -> tuple[dict[str, int], int]:
@@ -183,44 +183,63 @@ def upsert_setting(conn: Any, key: str, value: str) -> None:
     )
 
 
-def get_or_create_subject(conn: Any, name: str, description: str) -> int:
+def get_or_create_subject(conn: Any, teacher_id: int | str, name: str | None = None, description: str | None = None) -> int:
+    if description is None:
+        description = str(name or "")
+        name = str(teacher_id)
+        row = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()
+        if not row:
+            row = conn.execute("SELECT id FROM teachers WHERE is_active=1 ORDER BY id LIMIT 1").fetchone()
+        if not row:
+            raise RuntimeError("A seed teacher is required before creating subjects")
+        teacher_id = int(row["id"])
     stamp = now_iso()
-    row = conn.execute("SELECT id FROM subjects WHERE name=%s ", (name,)).fetchone()
+    row = conn.execute("SELECT id FROM subjects WHERE teacher_id=%s AND name=%s ", (teacher_id, name)).fetchone()
     if row:
         conn.execute(
-            "UPDATE subjects SET description=%s, is_archived=0, updated_at=%s WHERE id=%s",
-            (description, stamp, row["id"]),
+            "UPDATE subjects SET description=%s, is_archived=0, updated_at=%s WHERE id=%s AND teacher_id=%s",
+            (description, stamp, row["id"], teacher_id),
         )
         return int(row["id"])
     row = conn.execute(
-        "INSERT INTO subjects(name,description,is_archived,created_at,updated_at) VALUES(%s,%s,0,%s,%s) RETURNING id",
-        (name, description, stamp, stamp),
+        "INSERT INTO subjects(teacher_id,name,description,is_archived,created_at,updated_at) VALUES(%s,%s,%s,0,%s,%s) RETURNING id",
+        (teacher_id, name, description, stamp, stamp),
     ).fetchone()
     return int(row["id"])
 
 
 def get_or_create_category(
     conn: Any,
+    teacher_id: int,
     subject_id: int,
-    name: str,
-    description: str,
-    sort_order: int,
+    name: str | None = None,
+    description: str | None = None,
+    sort_order: int | None = None,
 ) -> int:
+    if sort_order is None:
+        sort_order = int(description or 0)
+        description = str(name or "")
+        name = str(subject_id)
+        subject_id = int(teacher_id)
+        row = conn.execute("SELECT teacher_id FROM subjects WHERE id=%s", (subject_id,)).fetchone()
+        if not row:
+            raise RuntimeError("A valid subject is required before creating categories")
+        teacher_id = int(row["teacher_id"])
     stamp = now_iso()
     row = conn.execute(
-        "SELECT id FROM categories WHERE subject_id=%s AND name=%s ",
-        (subject_id, name),
+        "SELECT id FROM categories WHERE teacher_id=%s AND subject_id=%s AND name=%s ",
+        (teacher_id, subject_id, name),
     ).fetchone()
     if row:
         conn.execute(
-            "UPDATE categories SET description=%s, sort_order=%s, is_archived=0, updated_at=%s WHERE id=%s",
-            (description, sort_order, stamp, row["id"]),
+            "UPDATE categories SET description=%s, sort_order=%s, is_archived=0, updated_at=%s WHERE id=%s AND teacher_id=%s",
+            (description, sort_order, stamp, row["id"], teacher_id),
         )
         return int(row["id"])
     row = conn.execute(
-        """INSERT INTO categories(subject_id,name,description,sort_order,is_archived,created_at,updated_at)
-           VALUES(%s,%s,%s,%s,0,%s,%s) RETURNING id""",
-        (subject_id, name, description, sort_order, stamp, stamp),
+        """INSERT INTO categories(teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at)
+           VALUES(%s,%s,%s,%s,%s,0,%s,%s) RETURNING id""",
+        (teacher_id, subject_id, name, description, sort_order, stamp, stamp),
     ).fetchone()
     return int(row["id"])
 
@@ -825,10 +844,11 @@ def main() -> None:
         category_ids: dict[tuple[str, str], int] = {}
 
         for subject_spec in SUBJECTS:
-            subject_id = get_or_create_subject(conn, subject_spec["name"], subject_spec["description"])
+            owner_teacher_id = teacher_ids[subject_spec["name"]]
+            subject_id = get_or_create_subject(conn, owner_teacher_id, subject_spec["name"], subject_spec["description"])
             subject_ids[subject_spec["name"]] = subject_id
             for order, (category_name, description) in enumerate(subject_spec["categories"], start=1):
-                category_id = get_or_create_category(conn, subject_id, category_name, description, order)
+                category_id = get_or_create_category(conn, owner_teacher_id, subject_id, category_name, description, order)
                 category_ids[(subject_spec["name"], category_name)] = category_id
 
         specs = demo_question_specs()

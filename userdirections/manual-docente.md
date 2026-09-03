@@ -6,11 +6,11 @@
 
 Abra **Acceso docente** o `/teacher` e ingrese con su correo y contraseña. Puede cambiar su propia clave desde la cuenta docente. Si no puede ingresar, solicite al administrador que confirme el estado de la cuenta o restablezca la contraseña.
 
-Su banco de preguntas, exámenes, intentos, resultados, exportaciones y penalizaciones están aislados por docente. El rol administrador no puede usar su privilegio para entrar en el contenido de otro docente. El padrón, las secciones y el catálogo sí son institucionales y compartidos.
+Su banco de preguntas, exámenes, asignaturas, categorías, intentos, resultados, exportaciones y penalizaciones están aislados por docente. El rol administrador no puede usar su privilegio para entrar en el contenido de otro docente. El padrón, las secciones y los estudiantes son gestionados solo por administración.
 
 ## Estudiantes y secciones
 
-En **Estudiantes y secciones** puede buscar y filtrar, crear secciones, agregar estudiantes, editar cuentas, restablecer claves y activar, desactivar o archivar.
+Como docente no gestiona esta superficie; la administración central la usa para crear secciones, agregar estudiantes, editar cuentas, restablecer claves y activar, desactivar o archivar.
 
 - Coordine cambios porque el padrón afecta a todos los docentes.
 - El correo es el usuario de acceso y debe ser único, incluso respecto de cuentas archivadas.
@@ -24,7 +24,7 @@ Para cargas masivas use [Importación de estudiantes](importacion-estudiantes.md
 
 ## Banco de preguntas
 
-Cada pregunta pertenece a una asignatura y categoría existentes. Las preguntas se crean en el banco y luego se agregan a las versiones de un examen. Crear o importar una pregunta no la incorpora automáticamente a una evaluación.
+Cada pregunta pertenece a una asignatura y categoría propias de su cuenta docente. Las preguntas se crean en el banco y luego se agregan a las versiones de un examen. Crear o importar una pregunta no la incorpora automáticamente a una evaluación.
 
 ### Los siete tipos
 
@@ -57,6 +57,8 @@ Consulte [Importación de preguntas](importacion-preguntas.md).
 3. Cree, renombre o duplique versiones según sea necesario.
 4. Asigne el examen a una sección en modo fijo o aleatorio.
 5. Publique el examen cuando al menos una versión activa tenga preguntas.
+
+Desde el detalle del examen puede descargar un PDF formal de impresión con todas las versiones activas, cada una en su propia página, sin claves de respuesta ni guiones de listening.
 
 El modo fijo entrega la versión elegida. El modo aleatorio distribuye de forma balanceada entre versiones utilizables. Una vez asignada una versión a un estudiante, permanece estable al actualizar, reconectar o reanudar.
 

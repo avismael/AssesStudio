@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ section['name'] }} · Informes{% endblock %}
+{% block body %}
+<main class="teacher-shell report-shell">
+  <div class="teacher-shell-grid">
+    {% set active_page = "reports" %}{% include "_teacher_nav.html" %}
+    <div class="teacher-workspace">
+      <header class="teacher-header">
+        <div>
+          <p class="eyebrow">{{ icon('chart-bar') }}Módulo de informes</p>
+          <h1>{{ section['name'] }}</h1>
+          <p>{{ section['student_count']|int }} estudiantes · {{ subjects|length }} asignaturas disponibles</p>
+        </div>
+        <a class="primary-btn" href="{{ back_url }}">{{ icon('arrow-left') }}Volver a informes</a>
+      </header>
+
+      <div class="report-note">
+        {% if is_admin %}Vista completa de administración.{% else %}Vista restringida a los datos visibles de tu cuenta.{% endif %}
+      </div>
+
+      <section class="result-card report-card">
+        <div class="catalog-card-grid catalog-subject-grid">
+          {% for subject in subjects %}
+          <a class="catalog-item catalog-subject-card" href="{{ url_for('teacher_section_subject_report', section_id=section['id'], subject_id=subject['id']) }}">
+            <div>
+              <h3>{{ icon('file-text') }}{{ subject['name'] }}</h3>
+              <p class="catalog-subject-description">{{ subject['description'] or 'Sin descripción' }}</p>
+            </div>
+            <div class="catalog-stats">
+              <span>{{ icon('file-text') }}{{ subject['exam_count'] }} exámenes</span>
+            </div>
+            <span class="catalog-card-cta">{{ icon('arrow-right') }}Generar informe</span>
+          </a>
+          {% else %}
+          <p>Esta sección no tiene asignaturas disponibles para informes.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+<script>localStorage.setItem('assessmentStudio.teacherSidebarCollapsed', '0');</script>
+{% endblock %}

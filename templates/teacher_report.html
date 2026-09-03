@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ report_title }}{% endblock %}
+{% block body %}
+<main class="teacher-shell report-shell">
+  <div class="teacher-shell-grid">
+    {% set active_page = "reports" %}{% include "_teacher_nav.html" %}
+    <div class="teacher-workspace">
+      <section class="result-card report-card">
+        <div class="result-heading report-heading">
+          <div>
+            <p class="eyebrow">{{ icon('chart-bar') }}{{ institution }}</p>
+            <h1>{{ report_title }}</h1>
+            <p>{{ report_subtitle }}</p>
+          </div>
+        </div>
+
+        <div class="report-note">{{ scope_note }}</div>
+
+        {% if mode == 'subject' %}
+        <div class="report-meta">
+          <div><span>Sección</span><strong>{{ section['name'] }}</strong></div>
+          <div><span>Asignatura</span><strong>{{ subject['name'] }}</strong></div>
+          <div><span>Evaluación</span><strong>{{ evaluation['title'] if evaluation else '—' }}</strong></div>
+        </div>
+        <section class="table-card report-table-card">
+          <div class="table-scroll">
+            <table class="report-table">
+              <thead>
+                <tr>
+                  <th>NIE</th>
+                  <th>Nombre completo</th>
+                  <th>NOTA</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in rows %}
+                <tr>
+                  <td data-label="NIE"><strong>{{ row['student_code'] or '—' }}</strong></td>
+                  <td data-label="Nombre completo"><strong>{{ row['full_name'] }}</strong></td>
+                  <td data-label="NOTA">
+                    {% if row['attempt_id'] %}
+                    <strong>{{ '%.2f'|format(row['adjusted_grade10'] or row['grade10'] or 0) }}</strong>
+                    {% else %}
+                    —
+                    {% endif %}
+                  </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="3">No hay estudiantes o evaluaciones disponibles para esta asignatura.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        {% else %}
+        <div class="report-note">
+          <strong>NIE:</strong> {{ student['student_code'] or '—' }}<br>
+          <strong>Sección:</strong> {{ student['section_name'] }}
+        </div>
+        <section class="table-card report-table-card">
+          <div class="table-scroll">
+            <table class="report-table">
+              <thead>
+                <tr>
+                  <th>Asignatura</th>
+                  <th>Examen</th>
+                  <th>Nota</th>
+                  <th>Documento</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in rows %}
+                <tr>
+                  <td data-label="Asignatura"><strong>{{ row['subject_name'] }}</strong></td>
+                  <td data-label="Examen">
+                    <strong>{{ row['title'] }}</strong>
+                    {% if row['assigned_version_name'] %}<small>Versión {{ row['assigned_version_name'] }}</small>{% endif %}
+                  </td>
+                  <td data-label="Nota">{% if row['attempt_status'] == 'submitted' %}{{ '%.2f'|format(row['adjusted_grade10'] or 0) }}{% else %}—{% endif %}</td>
+                  <td data-label="Documento" class="roster-actions-cell">
+                    <div class="roster-row-actions">
+                      {% if row['attempt_id'] and row['attempt_status'] == 'submitted' %}
+                      <a class="ghost-btn compact" href="{{ url_for('report_pdf', attempt_id=row['attempt_id']) }}">PDF</a>
+                      {% else %}
+                      <span class="report-link compact">—</span>
+                      {% endif %}
+                    </div>
+                  </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="4">No hay exámenes visibles para este estudiante.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        {% endif %}
+
+        <div class="result-actions">
+          <button class="ghost-btn" type="button" onclick="window.print()">{{ icon('file-text') }}Imprimir</button>
+          <a class="primary-btn" href="{{ back_url }}">{{ icon('arrow-left') }}Volver</a>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+<script>localStorage.setItem('assessmentStudio.teacherSidebarCollapsed', '0');</script>
+{% endblock %}

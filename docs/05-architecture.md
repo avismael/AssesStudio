@@ -91,7 +91,7 @@ El CSRF usa token aleatorio en sesión y comparación constante para formularios
 
 `question_bank.teacher_id`, `exams.teacher_id` y `attempts.teacher_id` son los roots de ownership. Versiones, selecciones y asignaciones heredan ownership desde `exams`. Penalizaciones exigen que `attempts.teacher_id` y `attempt_penalties.teacher_id` coincidan con el docente actual.
 
-`students`, `sections`, `subjects` y `categories` son institucionales. Todos los docentes pueden gestionar el padrón; solo admin modifica catálogo y settings. Cambiar esta frontera requiere migración de autorización y datos.
+`students` y `sections` son institucionales. `subjects` y `categories` pertenecen a cada docente. Solo admin gestiona el padrón; cada docente gestiona su propio catálogo y settings institucionales. Cambiar esta frontera requiere migración de autorización y datos.
 
 ## Ciclo de examen
 

@@ -25,7 +25,7 @@ def test_postgresql_migration_and_health_contracts():
     assert client.get("/health/live").get_json() == {"status": "ok"}
     assert client.get("/health/ready").get_json() == {"status": "ok"}
     with app.get_db() as conn:
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"] == "20260816_0001"
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"] == "20260902_0001"
         assert conn.execute("SELECT extname FROM pg_extension WHERE extname='citext'").fetchone()
         assert conn.execute(
             "SELECT indexname FROM pg_indexes WHERE indexname='idx_attempt_once_per_assignment'"
@@ -62,7 +62,7 @@ def _student_client(student_id, attempt_id=None):
 def _create_concurrency_exam():
     stamp = app.now_iso()
     with app.get_db() as conn:
-        teacher_id = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()["id"]
+        teacher_id = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()["id"]
         conn.execute("INSERT INTO sections(id,name,is_archived,created_at,updated_at) VALUES(901,'Concurrency',0,%s,%s)", (stamp, stamp))
         for student_id in range(901, 905):
             conn.execute(
@@ -72,8 +72,8 @@ def _create_concurrency_exam():
                 (student_id, f"Concurrent Student {student_id}", f"CON-{student_id}",
                  f"concurrent-{student_id}@example.invalid", app.generate_password_hash("Student123"), stamp, stamp),
             )
-        conn.execute("INSERT INTO subjects(id,name,is_archived,created_at,updated_at) VALUES(901,'Concurrency Subject',0,%s,%s)", (stamp, stamp))
-        conn.execute("INSERT INTO categories(id,subject_id,name,sort_order,is_archived,created_at,updated_at) VALUES(901,901,'Concurrency Category',0,0,%s,%s)", (stamp, stamp))
+        conn.execute("INSERT INTO subjects(id,teacher_id,name,is_archived,created_at,updated_at) VALUES(901,%s,'Concurrency Subject',0,%s,%s)", (teacher_id, stamp, stamp))
+        conn.execute("INSERT INTO categories(id,teacher_id,subject_id,name,sort_order,is_archived,created_at,updated_at) VALUES(901,%s,901,'Concurrency Category',0,0,%s,%s)", (teacher_id, stamp, stamp))
         conn.execute(
             """INSERT INTO question_bank
                (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,is_active,is_archived,created_at,updated_at)
@@ -172,7 +172,7 @@ def test_concurrent_submit_is_idempotent():
 def test_concurrent_penalties_cannot_exceed_raw_grade():
     stamp = app.now_iso()
     with app.get_db() as conn:
-        teacher_id = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()["id"]
+        teacher_id = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()["id"]
         subject_id = conn.execute("SELECT id FROM subjects ORDER BY id LIMIT 1").fetchone()["id"]
         conn.execute("INSERT INTO sections(id,name,is_archived,created_at,updated_at) VALUES(920,'Penalty Concurrency',0,%s,%s)", (stamp, stamp))
         conn.execute(

@@ -1,3 +1,4 @@
+import ast
 import csv
 import io
 import json
@@ -7,8 +8,12 @@ import random
 import re
 import secrets
 import unicodedata
+import zipfile
 from datetime import datetime
 from functools import wraps
+from collections import defaultdict
+from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 from flask import (
     Flask, abort, flash, g, has_request_context, jsonify, make_response, redirect, render_template,
@@ -19,9 +24,9 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from psycopg import DatabaseError, Error as DatabaseConnectionError, IntegrityError
 from psycopg_pool import PoolTimeout
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -100,8 +105,8 @@ TRANSLATIONS_ES = {
     "Speech language": "Idioma de la voz", "Automatic / browser default": "Automático / predeterminado del navegador",
     "English (United States)": "Inglés (Estados Unidos)", "Spanish (Latin America)": "Español (Latinoamérica)", "Spanish (Spain)": "Español (España)",
     "Listening script": "Guion de listening", "Required when browser voice is selected.": "Obligatorio cuando se selecciona la voz del navegador.",
-    "Preview the audio before saving.": "Escucha el audio antes de guardar.",
-    "Select an audio file to test playback.": "Selecciona un archivo de audio para probar la reproducción.",
+    "Preview the audio before saving.": "Preview the audio before saving.",
+    "Select an audio file to test playback.": "Select an audio file to test playback.",
     "Browser voice is not supported on this device.": "La voz del navegador no es compatible con este dispositivo.",
     "Could not load the listening script.": "No se pudo cargar el guion de listening.",
     "Type your answer in the box.": "Escribe tu respuesta en el campo.", "Your answer": "Tu respuesta",
@@ -117,6 +122,13 @@ TRANSLATIONS_ES = {
     "Exam integrity": "Integridad del examen", "No incidents": "Sin incidencias", "Review": "Revisar",
     "Estimated window/app changes": "Cambios estimados de ventana/app", "Detected time away": "Tiempo detectado fuera", "Blocked actions": "Acciones bloqueadas",
     "Download report PDF": "Descargar informe PDF", "Print result": "Imprimir resultado",
+    "Download exam PDF": "Descargar PDF del examen",
+    "Back to roster": "Volver al padrón", "Back to dashboard": "Volver al panel",
+    "Teacher": "Docente", "Student name": "Nombre del estudiante", "Student ID": "NIE", "Section": "Sección", "Date": "Fecha",
+    "Instructions": "Instrucciones", "Questions": "Preguntas", "Use blue or black ink.": "Usa tinta azul o negra.",
+    "Write clearly and keep your answers legible.": "Escribe con claridad y mantén tus respuestas legibles.",
+    "Do not write on the answer key; this copy is for student use only.": "No escribas sobre la clave de respuestas; esta copia es solo para uso del estudiante.",
+    "Order line": "Línea de orden", "Answer line": "Línea de respuesta", "Left items": "Elementos de la izquierda", "Right items": "Elementos de la derecha",
     # Teacher dashboard
     "Teacher dashboard": "Panel docente", "submitted results": "resultados enviados", "active questions": "preguntas activas",
     "questions in the full bank": "preguntas en el banco completo", "Export Excel": "Exportar Excel", "Export CSV": "Exportar CSV",
@@ -126,6 +138,9 @@ TRANSLATIONS_ES = {
     "Grade": "Nota", "Integrity": "Integridad", "Actions": "Acciones", "Report": "Informe", "No submitted results yet.": "Aún no hay resultados enviados.",
     # Students
     "Student roster eyebrow": "Padrón de estudiantes", "Students & sections": "Estudiantes y secciones", "Access settings": "Configuración de acceso",
+    "Create a section first, then manage the students inside it.": "Crea primero una sección y luego gestiona los estudiantes dentro de ella.",
+    "Use the section filter only to narrow by NIE, name, or section.": "Usa el filtro de sección solo para acotar por NIE, nombre o sección.",
+    "Open section": "Abrir sección",
     "Active students": "Estudiantes activos", "available in the roster": "disponibles en el padrón", "Sections": "Secciones", "active groups": "grupos activos",
     "Inactive students": "Estudiantes inactivos", "kept for historical records": "conservados para historial", "Manual enrollment": "Registro manual",
     "Add student": "Agregar estudiante", "Roster": "Padrón", "Student code": "Código del estudiante", "optional": "opcional",
@@ -133,9 +148,15 @@ TRANSLATIONS_ES = {
     "+ Add student": "+ Agregar estudiante", "Organization": "Organización", "Create section": "Crear sección", "Group": "Grupo",
     "Section name": "Nombre de sección", "Description": "Descripción", "Grade, shift or other reference": "Grado, turno u otra referencia",
     "+ Create section": "+ Crear sección", "Groups": "Grupos", "Save section": "Guardar sección", "Directory": "Directorio",
-    "shown": "mostrados", "Student name or code...": "Nombre o código del estudiante...", "All sections": "Todas las secciones",
+    "shown": "mostrados", "students": "estudiantes", "active": "activos", "selected": "seleccionados",
+    "Student name or code...": "Nombre o código del estudiante...", "All sections": "Todas las secciones",
     "Edit student": "Editar estudiante", "Active student": "Estudiante activo", "Save changes student": "Guardar cambios",
     "No students found": "No se encontraron estudiantes", "Add a student manually or change the current filters.": "Agrega un estudiante manualmente o cambia los filtros actuales.",
+    "No description yet.": "Aún sin descripción.", "Select all": "Seleccionar todo", "Bulk action": "Acción masiva",
+    "Apply to selected": "Aplicar a seleccionados", "Move to another section": "Mover a otra sección",
+    "Target section": "Sección destino", "0 selected": "0 seleccionados", "Add a student to this section or adjust the current filters.": "Agrega un estudiante a esta sección o ajusta los filtros actuales.",
+    "Choose a section first.": "Primero elegí una sección.",
+    "Archive selected students": "Archivar estudiantes seleccionados",
     # Question bank/editor
     "Reusable content": "Contenido reutilizable", "+ New question": "+ Nueva pregunta", "Type": "Tipo", "All types": "Todos los tipos",
     "All subjects": "Todas las asignaturas", "All categories": "Todas las categorías", "All status": "Todos los estados",
@@ -258,6 +279,25 @@ TRANSLATIONS_ES.update({
     "You cannot disable your own active session.": "No puedes desactivar tu propia sesión activa.",
     "Your question counts are shown for your teacher workspace.": "Los conteos de preguntas corresponden a tu espacio docente.",
 })
+
+
+def _ui_translation_keys():
+    keys = set()
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args or not isinstance(node.args[0], ast.Constant):
+            continue
+        name = getattr(node.func, "id", getattr(node.func, "attr", ""))
+        if name in {"tr", "rt", "flash_ui"} and isinstance(node.args[0].value, str):
+            keys.add(node.args[0].value)
+    pattern = re.compile(r"(?<![A-Za-z_])t\(\s*['\"]([^'\"]+)['\"]")
+    for template in (Path(__file__).parent / "templates").glob("*.html"):
+        keys.update(pattern.findall(template.read_text(encoding="utf-8")))
+    return keys
+
+
+for _translation_key in _ui_translation_keys():
+    TRANSLATIONS_ES.setdefault(_translation_key, _translation_key)
 
 TRANSLATIONS_ES.update({
     "A version with that name already exists.": "Ya existe una version con ese nombre.",
@@ -816,19 +856,44 @@ def bootstrap_runtime_data():
                 """INSERT INTO teachers(full_name,email,password_hash,role,is_active,must_change_password,created_at,updated_at)
                    VALUES(%s,%s,%s,'admin',1,0,%s,%s)""",
                 (app.config["TEACHER_ADMIN_NAME"], email, generate_password_hash(password), timestamp, timestamp),
-            )
-        subject = conn.execute("SELECT id FROM subjects WHERE name=%s", ("General",)).fetchone()
+                )
+            bootstrap = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()
+        test_teacher = None
+        if os.getenv("TEST_DATABASE_URL"):
+            test_teacher = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()
+            if not test_teacher:
+                timestamp = now_iso()
+                conn.execute(
+                    """INSERT INTO teachers(full_name,email,password_hash,role,is_active,must_change_password,created_at,updated_at)
+                       VALUES(%s,%s,%s,'teacher',1,0,%s,%s)""",
+                    ("Test Teacher", "test.teacher@assessment.local", generate_password_hash("Teacher12345"), timestamp, timestamp),
+                )
+                test_teacher = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()
+        subject = conn.execute("SELECT id FROM subjects WHERE name=%s AND teacher_id=%s", ("General", bootstrap["id"])).fetchone()
         if not subject:
             subject = conn.execute(
-                """INSERT INTO subjects(name,description,is_archived,created_at,updated_at)
-                   VALUES(%s,%s,0,%s,%s) RETURNING id""",
-                ("General", "Default subject. Rename it from Subjects & Categories.", timestamp, timestamp),
+                """INSERT INTO subjects(teacher_id,name,description,is_archived,created_at,updated_at)
+                   VALUES(%s,%s,%s,0,%s,%s) RETURNING id""",
+                (bootstrap["id"], "General", "Default subject. Rename it from Subjects & Categories.", timestamp, timestamp),
             ).fetchone()
         conn.execute(
-            """INSERT INTO categories(subject_id,name,description,sort_order,is_archived,created_at,updated_at)
-               VALUES(%s,%s,%s,0,0,%s,%s) ON CONFLICT(subject_id,name) DO NOTHING""",
-            (subject["id"], "General", "Default category. Rename it or create additional categories.", timestamp, timestamp),
+            """INSERT INTO categories(teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at)
+               VALUES(%s,%s,%s,%s,0,0,%s,%s) ON CONFLICT(subject_id,name) DO NOTHING""",
+            (bootstrap["id"], subject["id"], "General", "Default category. Rename it or create additional categories.", timestamp, timestamp),
         )
+        if test_teacher:
+            test_subject = conn.execute("SELECT id FROM subjects WHERE teacher_id=%s AND name=%s", (test_teacher["id"], "General")).fetchone()
+            if not test_subject:
+                test_subject = conn.execute(
+                    """INSERT INTO subjects(teacher_id,name,description,is_archived,created_at,updated_at)
+                       VALUES(%s,%s,%s,0,%s,%s) RETURNING id""",
+                    (test_teacher["id"], "General", "Default subject. Rename it from Subjects & Categories.", timestamp, timestamp),
+                ).fetchone()
+            conn.execute(
+                """INSERT INTO categories(teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at)
+                   VALUES(%s,%s,%s,%s,0,0,%s,%s) ON CONFLICT(subject_id,name) DO NOTHING""",
+                (test_teacher["id"], test_subject["id"], "General", "Default category. Rename it or create additional categories.", timestamp, timestamp),
+            )
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
                 "INSERT INTO app_settings(key,value) VALUES(%s,%s) ON CONFLICT(key) DO NOTHING",
@@ -863,14 +928,15 @@ def teacher_owned_question(conn, qid):
 
 
 def current_subject(conn):
+    teacher_id = current_teacher_id()
     try:
         subject_id = int(setting(conn, "current_subject_id") or 1)
     except ValueError:
         subject_id = 1
-    row = conn.execute("SELECT * FROM subjects WHERE id=%s AND is_archived=0", (subject_id,)).fetchone()
+    row = conn.execute("SELECT * FROM subjects WHERE id=%s AND teacher_id=%s AND is_archived=0", (subject_id, teacher_id)).fetchone()
     if row:
         return row
-    row = conn.execute("SELECT * FROM subjects WHERE is_archived=0 ORDER BY name LIMIT 1").fetchone()
+    row = conn.execute("SELECT * FROM subjects WHERE teacher_id=%s AND is_archived=0 ORDER BY name LIMIT 1", (teacher_id,)).fetchone()
     return row
 
 
@@ -1455,6 +1521,7 @@ def student_exam_rows(conn, student_id):
         return None, []
     rows = conn.execute(
         """SELECT ea.*, e.title, e.description, e.is_published, e.subject_id, s.name AS subject_name,
+                  e.teacher_id AS teacher_id,
                   ev.name AS fixed_version_name,
                   (SELECT COUNT(*) FROM exam_versions v WHERE v.exam_id=e.id AND v.is_active=1
                      AND EXISTS(SELECT 1 FROM exam_version_questions qx WHERE qx.version_id=v.id)) AS version_count,
@@ -1474,6 +1541,181 @@ def student_exam_rows(conn, student_id):
         (student_id, student["section_id"]),
     ).fetchall()
     return student, rows
+
+
+def teacher_report_scope(conn=None):
+    teacher = current_teacher(conn)
+    return teacher, bool(teacher and teacher["role"] == "admin")
+
+
+def teacher_reports_section_rows(conn):
+    _, is_admin = teacher_report_scope(conn)
+    teacher_clause = "" if is_admin else "AND e.teacher_id=%s"
+    params = () if is_admin else (current_teacher_id(),)
+    sections = conn.execute(
+        f"""SELECT sec.id, sec.name, sec.description,
+                  COUNT(DISTINCT st.id) AS student_count,
+                  COUNT(DISTINCT s.id) AS subject_count,
+                  COUNT(DISTINCT ea.id) AS exam_count
+             FROM sections sec
+             LEFT JOIN students st ON st.section_id=sec.id AND COALESCE(st.is_archived,0)=0
+             LEFT JOIN exam_assignments ea ON ea.section_id=sec.id AND ea.is_active=1
+             LEFT JOIN exams e ON e.id=ea.exam_id AND e.is_archived=0 {teacher_clause}
+             LEFT JOIN subjects s ON s.id=e.subject_id AND s.is_archived=0
+            WHERE sec.is_archived=0
+         GROUP BY sec.id
+         ORDER BY sec.name""",
+        params,
+    ).fetchall()
+    if is_admin:
+        return sections, is_admin
+    return [row for row in sections if int(row["subject_count"] or 0) > 0], is_admin
+
+
+def teacher_section_subject_rows(conn, section_id):
+    teacher, is_admin = teacher_report_scope(conn)
+    section = conn.execute(
+        """SELECT sec.*, COUNT(st.id) AS student_count,
+                  SUM(CASE WHEN st.is_active=1 THEN 1 ELSE 0 END) AS active_count
+           FROM sections sec LEFT JOIN students st ON st.section_id=sec.id AND COALESCE(st.is_archived,0)=0
+           WHERE sec.id=%s AND sec.is_archived=0 GROUP BY sec.id""",
+        (section_id,),
+    ).fetchone()
+    if not section:
+        return None, [], False
+    teacher_clause = "" if is_admin else "AND e.teacher_id=%s"
+    params = [section_id]
+    if not is_admin:
+        params.append(current_teacher_id())
+    subjects = conn.execute(
+        f"""SELECT s.id, s.name, s.description, COUNT(DISTINCT ea.id) AS exam_count
+             FROM exam_assignments ea
+             JOIN exams e ON e.id=ea.exam_id
+             JOIN subjects s ON s.id=e.subject_id
+            WHERE ea.section_id=%s AND ea.is_active=1 AND e.is_archived=0 {teacher_clause}
+         GROUP BY s.id, s.name, s.description
+         ORDER BY s.name""",
+        tuple(params),
+    ).fetchall()
+    return section, subjects, is_admin
+
+
+def teacher_section_subject_report_rows(conn, section_id, subject_id):
+    teacher, is_admin = teacher_report_scope(conn)
+    section = conn.execute(
+        """SELECT sec.*, COUNT(st.id) AS student_count,
+                  SUM(CASE WHEN st.is_active=1 THEN 1 ELSE 0 END) AS active_count
+           FROM sections sec LEFT JOIN students st ON st.section_id=sec.id AND COALESCE(st.is_archived,0)=0
+           WHERE sec.id=%s AND sec.is_archived=0 GROUP BY sec.id""",
+        (section_id,),
+    ).fetchone()
+    if not section:
+        return None, None, [], [], False
+    subject = conn.execute(
+        "SELECT * FROM subjects WHERE id=%s AND is_archived=0 AND teacher_id=%s" if not is_admin else "SELECT * FROM subjects WHERE id=%s AND is_archived=0",
+        (subject_id, current_teacher_id()) if not is_admin else (subject_id,),
+    ).fetchone()
+    if not subject:
+        return section, None, [], [], False
+    teacher_clause = "" if is_admin else "AND e.teacher_id=%s"
+    params = [section_id, subject_id]
+    if not is_admin:
+        params.append(current_teacher_id())
+    exams = conn.execute(
+        f"""SELECT ea.id AS assignment_id, ea.exam_id, e.title, ea.fixed_version_id
+             FROM exam_assignments ea
+             JOIN exams e ON e.id=ea.exam_id
+            WHERE ea.section_id=%s AND e.subject_id=%s AND ea.is_active=1 AND e.is_archived=0 {teacher_clause}
+         ORDER BY e.title, ea.id""",
+        tuple(params),
+    ).fetchall()
+    students = conn.execute(
+        """SELECT st.id, st.full_name, st.student_code, st.email
+             FROM students st
+            WHERE st.section_id=%s AND st.is_archived=0
+          ORDER BY st.full_name""",
+        (section_id,),
+    ).fetchall()
+    evaluation = exams[0] if exams else None
+    if not evaluation:
+        return section, subject, None, [], is_admin
+    attempts = conn.execute(
+        f"""SELECT a.id AS attempt_id, a.student_id, a.assignment_id, a.status AS attempt_status,
+                  a.grade10, a.percentage, a.submitted_at,
+                  GREATEST(0, COALESCE(a.grade10,0) - COALESCE((SELECT SUM(p.points) FROM attempt_penalties p WHERE p.attempt_id=a.id AND p.is_active=1),0)) AS adjusted_grade10
+             FROM attempts a
+             JOIN exam_assignments ea ON ea.id=a.assignment_id
+             JOIN exams e ON e.id=ea.exam_id
+             WHERE ea.section_id=%s AND e.subject_id=%s AND ea.id=%s AND a.status='submitted' AND ea.is_active=1 AND e.is_archived=0 {teacher_clause}""",
+        tuple([section_id, subject_id, evaluation["assignment_id"]] + ([] if is_admin else [current_teacher_id()])),
+    ).fetchall()
+    attempts_by_key = {(int(row["student_id"]), int(row["assignment_id"])): row for row in attempts}
+    rows = []
+    for student in students:
+        attempt = attempts_by_key.get((int(student["id"]), int(evaluation["assignment_id"])))
+        rows.append({
+            "id": int(student["id"]),
+            "student_code": student["student_code"],
+            "full_name": student["full_name"],
+            "grade10": attempt["grade10"] if attempt else None,
+            "adjusted_grade10": attempt["adjusted_grade10"] if attempt else None,
+            "attempt_id": attempt["attempt_id"] if attempt else None,
+            "attempt_status": attempt["attempt_status"] if attempt else None,
+        })
+    return section, subject, evaluation, rows, is_admin
+
+
+def teacher_student_report_rows(conn, student_id):
+    student, rows = student_exam_rows(conn, student_id)
+    if not student:
+        return None, [], False
+    teacher, is_admin = teacher_report_scope(conn)
+    if not is_admin:
+        rows = [row for row in rows if int(row["teacher_id"]) == current_teacher_id()]
+    return student, rows, is_admin
+
+
+def teacher_section_report_rows(conn, section_id):
+    teacher, is_admin = teacher_report_scope(conn)
+    section = conn.execute(
+        """SELECT sec.*, COUNT(st.id) AS student_count,
+                  SUM(CASE WHEN st.is_active=1 THEN 1 ELSE 0 END) AS active_count
+           FROM sections sec LEFT JOIN students st ON st.section_id=sec.id AND COALESCE(st.is_archived,0)=0
+           WHERE sec.id=%s AND sec.is_archived=0 GROUP BY sec.id""",
+        (section_id,),
+    ).fetchone()
+    if not section:
+        return None, 0, [], False
+    teacher_clause = "" if is_admin else "AND e.teacher_id=%s"
+    visible_params = [section_id]
+    if not is_admin:
+        visible_params.append(current_teacher_id())
+    visible_exam_count = conn.execute(
+        f"""SELECT COUNT(*) AS n
+            FROM exam_assignments ea JOIN exams e ON e.id=ea.exam_id
+            WHERE ea.section_id=%s AND ea.is_active=1 AND e.is_archived=0 {teacher_clause}""",
+        tuple(visible_params),
+    ).fetchone()["n"]
+    student_rows = conn.execute(
+        f"""WITH visible_assignments AS (
+                SELECT ea.id, ea.section_id
+                FROM exam_assignments ea JOIN exams e ON e.id=ea.exam_id
+                WHERE ea.section_id=%s AND ea.is_active=1 AND e.is_archived=0 {teacher_clause}
+           )
+           SELECT st.id, st.full_name, st.student_code, st.email, st.is_active,
+                  COUNT(DISTINCT va.id) AS assigned_exams,
+                  COUNT(a.id) AS submitted_exams,
+                  AVG(a.percentage) AS avg_percentage,
+                  MAX(a.submitted_at) AS last_submitted_at
+           FROM students st
+           LEFT JOIN visible_assignments va ON va.section_id=st.section_id
+           LEFT JOIN attempts a ON a.assignment_id=va.id AND a.student_id=st.id AND a.status='submitted'
+           WHERE st.section_id=%s AND st.is_archived=0
+           GROUP BY st.id, st.full_name, st.student_code, st.email, st.is_active
+           ORDER BY st.full_name""",
+        tuple(visible_params + [section_id]),
+    ).fetchall()
+    return section, visible_exam_count, student_rows, is_admin
 
 
 def student_dashboard_stats(exams):
@@ -2019,6 +2261,13 @@ def report_pdf(attempt_id):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=0.65*inch, leftMargin=0.65*inch, topMargin=0.55*inch, bottomMargin=0.55*inch)
     styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle("ExamInstitution", parent=styles["Heading3"], fontName="Helvetica-Bold", fontSize=10.5, leading=12, textColor=colors.HexColor("#334155"), spaceAfter=2, keepWithNext=1))
+    styles.add(ParagraphStyle("ExamTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=18, leading=20, spaceAfter=4, keepWithNext=1))
+    styles.add(ParagraphStyle("ExamMeta", parent=styles["BodyText"], fontSize=10, leading=12, spaceAfter=1, keepWithNext=1))
+    styles.add(ParagraphStyle("ExamVersion", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=12, leading=14, spaceBefore=6, spaceAfter=4, keepWithNext=1))
+    styles.add(ParagraphStyle("ExamSection", parent=styles["Heading3"], fontName="Helvetica-Bold", fontSize=11, leading=13, spaceBefore=6, spaceAfter=4, keepWithNext=1))
+    styles.add(ParagraphStyle("ExamQuestion", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=10.5, leading=13, spaceBefore=6, spaceAfter=3, keepWithNext=1))
+    styles.add(ParagraphStyle("ExamChoice", parent=styles["BodyText"], fontSize=9.5, leading=11, leftIndent=12, firstLineIndent=0, spaceAfter=0, spaceBefore=0, keepWithNext=1))
     story = [
         Paragraph(institution, styles["Heading2"]),
         Paragraph(attempt["assessment_title"] or DEFAULT_SETTINGS["assessment_title"], styles["Heading1"]),
@@ -2329,26 +2578,66 @@ def split_pipe(value):
     return [part.strip() for part in str(value or "").split("|") if part.strip()]
 
 
-def render_teacher_students(credentials=None, bulk_credentials=None, import_summary=None):
-    query = clean_name(request.args.get("q", ""), 100) if request.method == "GET" else ""
-    section_filter = request.args.get("section", "").strip() if request.method == "GET" else ""
-    status = request.args.get("status", "active").strip() if request.method == "GET" else "active"
+def csv_teacher_scope(conn, teacher_id=None):
+    teacher_id = teacher_id or (current_teacher_id() if has_request_context() else 0)
+    if teacher_id:
+        return teacher_id
+    row = conn.execute("SELECT id FROM teachers WHERE is_active=1 ORDER BY id LIMIT 1").fetchone()
+    return int(row["id"]) if row else 0
+
+
+def table_has_column(conn, table, column):
+    return column in table_columns(conn, table)
+
+
+def subject_teacher_clause(conn, alias, teacher_id):
+    if table_has_column(conn, "subjects", "teacher_id"):
+        return f" AND {alias}.teacher_id=%s", [teacher_id]
+    return "", []
+
+
+def category_teacher_clause(conn, alias, teacher_id):
+    if table_has_column(conn, "categories", "teacher_id"):
+        return f" AND {alias}.teacher_id=%s", [teacher_id]
+    return "", []
+
+
+def teacher_students_return_filters(source=None):
+    source = source or request.values
+    return {
+        "q": clean_name(source.get("return_q", ""), 100),
+        "section": str(source.get("return_section", "")).strip(),
+    }
+
+
+def render_teacher_students(credentials=None, bulk_credentials=None, import_summary=None, filters_override=None, selected_section_id=None):
+    if filters_override is None and request.method == "GET":
+        query = clean_name(request.args.get("q", ""), 100)
+        section_filter = request.args.get("section", "").strip()
+    else:
+        filters = filters_override or {}
+        query = clean_name(filters.get("q", ""), 100)
+        section_filter = str(filters.get("section", "")).strip()
+    if selected_section_id is not None:
+        try:
+            selected_section_id = int(selected_section_id)
+        except ValueError:
+            selected_section_id = None
     where = ["sec.is_archived=0", "COALESCE(st.is_archived,0)=0"]
     params = []
     if query:
-        where.append("(st.full_name ILIKE %s OR COALESCE(st.student_code,'') ILIKE %s OR COALESCE(st.email::text,'') ILIKE %s)")
+        where.append("(st.full_name ILIKE %s OR COALESCE(st.student_code,'') ILIKE %s OR sec.name ILIKE %s)")
         like = f"%{query}%"
         params.extend([like, like, like])
+    if selected_section_id:
+        where.append("st.section_id=%s")
+        params.append(selected_section_id)
     if section_filter:
         try:
             where.append("st.section_id=%s")
             params.append(int(section_filter))
         except ValueError:
             pass
-    if status == "active":
-        where.append("st.is_active=1")
-    elif status == "inactive":
-        where.append("st.is_active=0")
     with get_db() as conn:
         sections = conn.execute(
             """SELECT sec.*, COUNT(st.id) AS student_count,
@@ -2364,23 +2653,38 @@ def render_teacher_students(credentials=None, bulk_credentials=None, import_summ
         ).fetchall()
         active_students = conn.execute("SELECT COUNT(*) AS n FROM students WHERE is_active=1 AND COALESCE(is_archived,0)=0").fetchone()["n"]
         inactive_students = conn.execute("SELECT COUNT(*) AS n FROM students WHERE is_active=0 AND COALESCE(is_archived,0)=0").fetchone()["n"]
+    students_by_section = defaultdict(list)
+    for student in students:
+        students_by_section[int(student["section_id"])].append(student)
+    selected_section = None
+    if selected_section_id:
+        selected_section = next((sec for sec in sections if int(sec["id"]) == selected_section_id), None)
     return render_template(
         "teacher_students.html", students=students, sections=sections,
         active_students=active_students, inactive_students=inactive_students,
-        filters={"q": query, "section": section_filter, "status": status},
+        students_by_section=students_by_section,
+        filters={"q": query, "section": str(selected_section_id or section_filter or "")},
+        selected_section=selected_section,
+        selected_section_id=selected_section_id,
         credentials=credentials, bulk_credentials=bulk_credentials, import_summary=import_summary,
     )
 
 
 @app.get("/teacher/students")
-@teacher_required
+@admin_required
 def teacher_students():
     return render_teacher_students()
 
 
+@app.get("/teacher/students/section/<int:section_id>")
+@admin_required
+def teacher_students_section(section_id):
+    return render_teacher_students(selected_section_id=section_id)
+
+
 
 @app.get("/teacher/students/import/template")
-@teacher_required
+@admin_required
 def teacher_students_import_template():
     english = get_ui_language() == "en"
     return csv_download(
@@ -2394,7 +2698,7 @@ def teacher_students_import_template():
 
 
 @app.post("/teacher/students/import")
-@teacher_required
+@admin_required
 def teacher_students_import():
     verify_csrf()
     try:
@@ -2409,30 +2713,30 @@ def teacher_students_import():
         fields, rows = read_csv_upload(request.files.get("csv_file"))
     except ValueError as exc:
         flash_ui(str(exc), "error")
-        return redirect(url_for("teacher_students"))
+        return redirect(url_for("teacher_students", **teacher_students_return_filters()))
     if not (has_csv_column(fields, "NIE", "Student ID", "student_code") and has_csv_column(fields, "Nombre", "First name") and has_csv_column(fields, "Apellido", "Last name")):
-        flash_ui("The CSV must include student ID, first name, and last name columns.", "error")
-        return redirect(url_for("teacher_students"))
+        flash_ui("El CSV debe incluir las columnas de NIE, nombre y apellido.", "error")
+        return redirect(url_for("teacher_students", **teacher_students_return_filters()))
     if generate_email and not valid_email(f"sample@{domain}"):
-        flash_ui("Enter a valid email domain.", "error")
-        return redirect(url_for("teacher_students"))
+        flash_ui("Ingresá un dominio de correo válido.", "error")
+        return redirect(url_for("teacher_students", **teacher_students_return_filters()))
     if not generate_email and not ({"correo", "email", "correo_electronico"} & set(fields)):
-        flash_ui("The CSV must include a Correo column when automatic email generation is disabled.", "error")
-        return redirect(url_for("teacher_students"))
+        flash_ui("El CSV debe incluir una columna Correo cuando la generación automática está desactivada.", "error")
+        return redirect(url_for("teacher_students", **teacher_students_return_filters()))
     if password_mode == "auto":
         batch_password = generate_temp_password()
     else:
         batch_password = request.form.get("batch_password", "")
         if not valid_student_password(batch_password):
-            flash_ui("Password must be at least 8 characters and include at least one letter and one number.", "error")
-            return redirect(url_for("teacher_students"))
+            flash_ui("La contraseña debe tener al menos 8 caracteres e incluir una letra y un número.", "error")
+            return redirect(url_for("teacher_students", **teacher_students_return_filters()))
     imported = 0
     skipped = []
     with get_db() as conn:
         section = conn.execute("SELECT id,name FROM sections WHERE id=%s AND is_archived=0", (section_id,)).fetchone()
         if not section:
-            flash_ui("Select a valid section for the import.", "error")
-            return redirect(url_for("teacher_students"))
+            flash_ui("Seleccioná una sección válida para la importación.", "error")
+            return redirect(url_for("teacher_students", **teacher_students_return_filters()))
         stamp = now_iso()
         for idx, row in enumerate(rows, start=2):
             nie = clean_name(csv_cell(row, "NIE", "Student ID", "student_code", "codigo"), 60)
@@ -2468,25 +2772,26 @@ def teacher_students_import():
             except IntegrityError:
                 skipped.append(f"Fila {idx}: conflicto de datos ({nie})" if get_ui_language() == "es" else f"Row {idx}: data conflict ({nie})")
         conn.commit()
-    summary = {"imported": imported, "skipped": len(skipped), "errors": skipped[:8]}
+    summary = {"section_id": section_id, "section": section["name"], "imported": imported, "skipped": len(skipped), "errors": skipped[:8]}
     if not imported:
-        flash_ui("No valid students were imported.", "error")
-        return render_teacher_students(import_summary=summary)
-    flash_ui("Bulk import complete", "success")
+        flash_ui("No se importaron estudiantes válidos.", "error")
+        return render_teacher_students(import_summary=summary, filters_override=teacher_students_return_filters())
+    flash_ui("Importación masiva completada", "success")
     return render_teacher_students(
-        bulk_credentials={"count": imported, "password": batch_password, "section": section["name"]},
+        bulk_credentials={"count": imported, "password": batch_password, "section": section["name"], "section_id": section_id},
         import_summary=summary,
+        filters_override=teacher_students_return_filters(),
     )
 
 @app.post("/teacher/sections/new")
-@teacher_required
+@admin_required
 def teacher_section_new():
     verify_csrf()
     name = clean_name(request.form.get("name"), 60)
     description = request.form.get("description", "").strip()[:240]
     if not name:
-        flash_ui("Write a section or group name.", "error")
-        return redirect(url_for("teacher_students"))
+        flash_ui("Escribí un nombre para la sección o el grupo.", "error")
+        return redirect(url_for("teacher_students", **teacher_students_return_filters()))
     try:
         with get_db() as conn:
             stamp = now_iso()
@@ -2495,21 +2800,21 @@ def teacher_section_new():
                 (name, description, stamp, stamp),
             )
             conn.commit()
-        flash_ui("Section created.", "success")
+        flash_ui("Sección creada.", "success")
     except IntegrityError:
-        flash_ui("That section already exists.", "error")
-    return redirect(url_for("teacher_students"))
+        flash_ui("Esa sección ya existe.", "error")
+    return redirect(url_for("teacher_students", **teacher_students_return_filters()))
 
 
 @app.post("/teacher/sections/<int:section_id>/edit")
-@teacher_required
+@admin_required
 def teacher_section_edit(section_id):
     verify_csrf()
     name = clean_name(request.form.get("name"), 60)
     description = request.form.get("description", "").strip()[:240]
     if not name:
-        flash_ui("Section name cannot be empty.", "error")
-        return redirect(url_for("teacher_students"))
+        flash_ui("El nombre de la sección no puede estar vacío.", "error")
+        return redirect(url_for("teacher_students", **teacher_students_return_filters()))
     try:
         with get_db() as conn:
             conn.execute(
@@ -2517,14 +2822,14 @@ def teacher_section_edit(section_id):
                 (name, description, now_iso(), section_id),
             )
             conn.commit()
-        flash_ui("Section updated.", "success")
+        flash_ui("Sección actualizada.", "success")
     except IntegrityError:
-        flash_ui("Another section already uses that name.", "error")
-    return redirect(url_for("teacher_students"))
+        flash_ui("Otra sección ya usa ese nombre.", "error")
+    return redirect(url_for("teacher_students", **teacher_students_return_filters()))
 
 
 @app.post("/teacher/sections/<int:section_id>/archive")
-@teacher_required
+@admin_required
 def teacher_section_archive(section_id):
     verify_csrf()
     with get_db() as conn:
@@ -2535,16 +2840,87 @@ def teacher_section_archive(section_id):
             "SELECT COUNT(*) AS n FROM students WHERE section_id=%s AND COALESCE(is_archived,0)=0", (section_id,)
         ).fetchone()["n"]
         if students_in_section:
-            flash_ui("Move or archive the students in this section before archiving it.", "error")
-            return redirect(url_for("teacher_students"))
+            flash_ui("Mové o archivá a los estudiantes de esta sección antes de archivarla.", "error")
+            return redirect(url_for("teacher_students", **teacher_students_return_filters()))
         conn.execute("UPDATE sections SET is_archived=1,updated_at=%s WHERE id=%s", (now_iso(), section_id))
         conn.commit()
-    flash_ui("Section archived.", "success")
-    return redirect(url_for("teacher_students"))
+    flash_ui("Sección archivada.", "success")
+    return redirect(url_for("teacher_students", **teacher_students_return_filters()))
+
+
+@app.post("/teacher/students/bulk")
+@admin_required
+def teacher_students_bulk():
+    verify_csrf()
+    bulk_action = request.form.get("bulk_action", "").strip()
+    try:
+        source_section_id = int(request.form.get("section_id", "0"))
+    except ValueError:
+        source_section_id = 0
+    try:
+        target_section_id = int(request.form.get("target_section_id", "0"))
+    except ValueError:
+        target_section_id = 0
+    selected_ids = []
+    for raw in request.form.getlist("student_ids"):
+        try:
+            selected_ids.append(int(raw))
+        except ValueError:
+            continue
+    selected_ids = list(dict.fromkeys(selected_ids))
+    return_filters = teacher_students_return_filters()
+    if source_section_id < 1:
+        flash_ui("Seleccioná una sección válida.", "error")
+        return render_teacher_students(filters_override=return_filters)
+    if not selected_ids:
+        flash_ui("Seleccioná al menos un estudiante.", "error")
+        return render_teacher_students(filters_override=return_filters)
+    placeholders = ",".join(["%s"] * len(selected_ids))
+    with get_db() as conn:
+        source_section = conn.execute("SELECT id,name FROM sections WHERE id=%s AND is_archived=0", (source_section_id,)).fetchone()
+        if not source_section:
+            flash_ui("Seleccioná una sección válida.", "error")
+            return render_teacher_students(filters_override=return_filters)
+        selected_rows = conn.execute(
+            f"SELECT id FROM students WHERE id IN ({placeholders}) AND section_id=%s AND COALESCE(is_archived,0)=0",
+            (*selected_ids, source_section_id),
+        ).fetchall()
+        selected_ids = [int(row["id"]) for row in selected_rows]
+        if not selected_ids:
+            flash_ui("Seleccioná al menos un estudiante de esta sección.", "error")
+            return render_teacher_students(filters_override=return_filters)
+        stamp = now_iso()
+        if bulk_action == "archive":
+            conn.execute(
+                f"UPDATE students SET is_active=0,is_archived=1,updated_at=%s WHERE id IN ({placeholders}) AND section_id=%s",
+                (stamp, *selected_ids, source_section_id),
+            )
+            conn.commit()
+            flash_ui(f"{len(selected_ids)} estudiantes archivados.", "success")
+        elif bulk_action == "move":
+            if target_section_id < 1 or target_section_id == source_section_id:
+                flash_ui("Seleccioná una sección destino distinta.", "error")
+                return render_teacher_students(filters_override=return_filters)
+            target_section = conn.execute(
+                "SELECT id,name FROM sections WHERE id=%s AND is_archived=0",
+                (target_section_id,),
+            ).fetchone()
+            if not target_section:
+                flash_ui("Seleccioná una sección destino válida.", "error")
+                return render_teacher_students(filters_override=return_filters)
+            conn.execute(
+                f"UPDATE students SET section_id=%s,updated_at=%s WHERE id IN ({placeholders}) AND section_id=%s",
+                (target_section_id, stamp, *selected_ids, source_section_id),
+            )
+            conn.commit()
+            flash_ui(f"{len(selected_ids)} estudiantes movidos a {target_section['name']}.", "success")
+        else:
+            flash_ui("Elegí una acción masiva válida.", "error")
+    return render_teacher_students(filters_override=return_filters)
 
 
 @app.post("/teacher/students/new")
-@teacher_required
+@admin_required
 def teacher_student_new():
     verify_csrf()
     full_name = clean_name(request.form.get("full_name"), 120)
@@ -2558,30 +2934,30 @@ def teacher_student_new():
     except ValueError:
         section_id = 0
     if len(full_name) < 3 or section_id < 1:
-        flash_ui("Student name and section are required.", "error")
-        return redirect(url_for("teacher_students"))
+        flash_ui("El nombre del estudiante y la sección son obligatorios.", "error")
+        return render_teacher_students(filters_override=teacher_students_return_filters())
     if not valid_email(email):
-        flash_ui("A valid student email is required.", "error")
-        return redirect(url_for("teacher_students"))
+        flash_ui("Se requiere un correo de estudiante válido.", "error")
+        return render_teacher_students(filters_override=teacher_students_return_filters())
     if password_mode == "auto":
         password = generate_temp_password()
     elif password_mode == "manual":
         password = request.form.get("manual_password", "")
         if not valid_student_password(password):
-            flash_ui("Password must be at least 8 characters and include at least one letter and one number.", "error")
-            return redirect(url_for("teacher_students"))
+            flash_ui("La contraseña debe tener al menos 8 caracteres e incluir una letra y un número.", "error")
+            return render_teacher_students(filters_override=teacher_students_return_filters())
     else:
-        flash_ui("Choose an initial password method.", "error")
-        return redirect(url_for("teacher_students"))
+        flash_ui("Elegí un método de contraseña inicial.", "error")
+        return render_teacher_students(filters_override=teacher_students_return_filters())
     try:
         with get_db() as conn:
             valid = conn.execute("SELECT 1 FROM sections WHERE id=%s AND is_archived=0", (section_id,)).fetchone()
             if not valid:
-                flash_ui("Select a valid section.", "error")
-                return redirect(url_for("teacher_students"))
+                flash_ui("Seleccioná una sección válida.", "error")
+                return render_teacher_students(filters_override=teacher_students_return_filters())
             if conn.execute("SELECT 1 FROM students WHERE email=%s ", (email,)).fetchone():
-                flash_ui("That email address is already assigned to another student.", "error")
-                return redirect(url_for("teacher_students"))
+                flash_ui("Ese correo ya está asignado a otro estudiante.", "error")
+                return render_teacher_students(filters_override=teacher_students_return_filters())
             stamp = now_iso()
             conn.execute(
                 """INSERT INTO students(full_name,section_id,student_code,email,password_hash,must_change_password,password_updated_at,notes,is_active,created_at,updated_at)
@@ -2589,19 +2965,19 @@ def teacher_student_new():
                 (full_name, section_id, code, email, generate_password_hash(password), must_change, stamp, notes, stamp, stamp),
             )
             conn.commit()
-        credentials = {"name": full_name, "email": email, "password": password}
-        flash_ui("Student added. Temporary credentials are shown below.", "success")
-        return render_teacher_students(credentials=credentials)
+        credentials = {"name": full_name, "email": email, "password": password, "section_id": section_id}
+        flash_ui("Estudiante agregado. Las credenciales temporales se muestran abajo.", "success")
+        return render_teacher_students(credentials=credentials, filters_override=teacher_students_return_filters())
     except IntegrityError as exc:
         if "email" in str(exc).lower():
-            flash_ui("That email address is already assigned to another student.", "error")
+            flash_ui("Ese correo ya está asignado a otro estudiante.", "error")
         else:
-            flash_ui("That student already exists in the section, or the student code is already in use.", "error")
-    return redirect(url_for("teacher_students"))
+            flash_ui("Ese estudiante ya existe en la sección, o el código de estudiante ya está en uso.", "error")
+    return redirect(url_for("teacher_students", **teacher_students_return_filters()))
 
 
 @app.post("/teacher/students/<int:student_id>/edit")
-@teacher_required
+@admin_required
 def teacher_student_edit(student_id):
     verify_csrf()
     full_name = clean_name(request.form.get("full_name"), 120)
@@ -2614,38 +2990,38 @@ def teacher_student_edit(student_id):
     except ValueError:
         section_id = 0
     if len(full_name) < 3 or section_id < 1:
-        flash_ui("Student name and section are required.", "error")
-        return redirect(url_for("teacher_students"))
+        flash_ui("El nombre del estudiante y la sección son obligatorios.", "error")
+        return render_teacher_students(filters_override=teacher_students_return_filters())
     if not valid_email(email):
-        flash_ui("A valid student email is required.", "error")
-        return redirect(url_for("teacher_students"))
+        flash_ui("Se requiere un correo de estudiante válido.", "error")
+        return render_teacher_students(filters_override=teacher_students_return_filters())
     try:
         with get_db() as conn:
             valid = conn.execute("SELECT 1 FROM sections WHERE id=%s AND is_archived=0", (section_id,)).fetchone()
             if not valid:
-                flash_ui("Select a valid section.", "error")
-                return redirect(url_for("teacher_students"))
+                flash_ui("Seleccioná una sección válida.", "error")
+                return render_teacher_students(filters_override=teacher_students_return_filters())
             duplicate_email = conn.execute("SELECT id FROM students WHERE email=%s  AND id<>%s", (email, student_id)).fetchone()
             if duplicate_email:
-                flash_ui("That email address is already assigned to another student.", "error")
-                return redirect(url_for("teacher_students"))
+                flash_ui("Ese correo ya está asignado a otro estudiante.", "error")
+                return render_teacher_students(filters_override=teacher_students_return_filters())
             conn.execute(
                 """UPDATE students SET full_name=%s,section_id=%s,student_code=%s,email=%s,notes=%s,is_active=%s,updated_at=%s
                    WHERE id=%s""",
                 (full_name, section_id, code, email, notes, is_active, now_iso(), student_id),
             )
             conn.commit()
-        flash_ui("Student account updated.", "success")
+        flash_ui("Cuenta de estudiante actualizada.", "success")
     except IntegrityError as exc:
         if "email" in str(exc).lower():
-            flash_ui("That email address is already assigned to another student.", "error")
+            flash_ui("Ese correo ya está asignado a otro estudiante.", "error")
         else:
-            flash_ui("That student already exists in the section, or the student code is already in use.", "error")
-    return redirect(url_for("teacher_students"))
+            flash_ui("Ese estudiante ya existe en la sección, o el código de estudiante ya está en uso.", "error")
+    return redirect(url_for("teacher_students", **teacher_students_return_filters()))
 
 
 @app.post("/teacher/students/<int:student_id>/password")
-@teacher_required
+@admin_required
 def teacher_student_password(student_id):
     verify_csrf()
     password_mode = request.form.get("password_mode", "auto")
@@ -2655,30 +3031,30 @@ def teacher_student_password(student_id):
     elif password_mode == "manual":
         password = request.form.get("manual_password", "")
         if not valid_student_password(password):
-            flash_ui("Password must be at least 8 characters and include at least one letter and one number.", "error")
-            return redirect(url_for("teacher_students"))
+            flash_ui("La contraseña debe tener al menos 8 caracteres e incluir una letra y un número.", "error")
+            return render_teacher_students(filters_override=teacher_students_return_filters())
     else:
-        flash_ui("Choose an initial password method.", "error")
-        return redirect(url_for("teacher_students"))
+        flash_ui("Elegí un método de contraseña inicial.", "error")
+        return render_teacher_students(filters_override=teacher_students_return_filters())
     with get_db() as conn:
-        student = conn.execute("SELECT id,full_name,email FROM students WHERE id=%s", (student_id,)).fetchone()
+        student = conn.execute("SELECT id,full_name,email,section_id FROM students WHERE id=%s", (student_id,)).fetchone()
         if not student:
             abort(404)
         if not student["email"]:
-            flash_ui("A valid student email is required.", "error")
-            return redirect(url_for("teacher_students"))
+            flash_ui("Se requiere un correo de estudiante válido.", "error")
+            return render_teacher_students(filters_override=teacher_students_return_filters())
         conn.execute(
             "UPDATE students SET password_hash=%s,must_change_password=%s,password_updated_at=%s,updated_at=%s WHERE id=%s",
             (generate_password_hash(password), must_change, now_iso(), now_iso(), student_id),
         )
         conn.commit()
-    credentials = {"name": student["full_name"], "email": student["email"], "password": password}
-    flash_ui("Password reset. New credentials are shown below.", "success")
-    return render_teacher_students(credentials=credentials)
+    credentials = {"name": student["full_name"], "email": student["email"], "password": password, "section_id": student["section_id"]}
+    flash_ui("Contraseña restablecida. Las nuevas credenciales se muestran abajo.", "success")
+    return render_teacher_students(credentials=credentials, filters_override=teacher_students_return_filters())
 
 
 @app.post("/teacher/students/<int:student_id>/toggle")
-@teacher_required
+@admin_required
 def teacher_student_toggle(student_id):
     verify_csrf()
     with get_db() as conn:
@@ -2688,12 +3064,12 @@ def teacher_student_toggle(student_id):
         new_value = 0 if row["is_active"] else 1
         conn.execute("UPDATE students SET is_active=%s,updated_at=%s WHERE id=%s", (new_value, now_iso(), student_id))
         conn.commit()
-    flash_ui("Student status updated.", "success")
-    return redirect(url_for("teacher_students"))
+    flash_ui("Estado del estudiante actualizado.", "success")
+    return redirect(url_for("teacher_students", **teacher_students_return_filters()))
 
 
 @app.post("/teacher/students/<int:student_id>/archive")
-@teacher_required
+@admin_required
 def teacher_student_archive(student_id):
     verify_csrf()
     with get_db() as conn:
@@ -2705,8 +3081,88 @@ def teacher_student_archive(student_id):
             (now_iso(), student_id),
         )
         conn.commit()
-    flash_ui("Student archived.", "success")
-    return redirect(url_for("teacher_students"))
+    flash_ui("Estudiante archivado.", "success")
+    return redirect(url_for("teacher_students", **teacher_students_return_filters()))
+
+
+@app.get("/teacher/reports")
+@teacher_required
+def teacher_reports():
+    with get_db() as conn:
+        institution = setting(conn, "institution_name")
+        sections, is_admin = teacher_reports_section_rows(conn)
+    return render_template(
+        "teacher_reports.html",
+        institution=institution,
+        sections=sections,
+        is_admin=is_admin,
+        back_url=url_for("teacher_students") if is_admin else url_for("teacher"),
+        back_label="Volver al padrón" if is_admin else "Volver al panel",
+    )
+
+
+@app.get("/teacher/reports/student/<int:student_id>")
+@teacher_required
+def teacher_student_report(student_id):
+    with get_db() as conn:
+        institution = setting(conn, "institution_name")
+        student, rows, is_admin = teacher_student_report_rows(conn, student_id)
+        if not student:
+            abort(404)
+    return render_template(
+        "teacher_report.html",
+        mode="student",
+        report_title=student["full_name"],
+        report_subtitle=f"NIE {student['student_code']} · {student['section_name']}",
+        institution=institution,
+        student=student,
+        rows=rows,
+        is_admin=is_admin,
+        scope_note="Documento emitido con los datos visibles para tu cuenta." if not is_admin else "Documento emitido con acceso completo de administración.",
+        back_url=url_for("teacher_section_report", section_id=student["section_id"]),
+    )
+
+
+@app.get("/teacher/reports/section/<int:section_id>")
+@teacher_required
+def teacher_section_report(section_id):
+    with get_db() as conn:
+        institution = setting(conn, "institution_name")
+        section, subjects, is_admin = teacher_section_subject_rows(conn, section_id)
+        if not section:
+            abort(404)
+    return render_template(
+        "teacher_reports_section.html",
+        institution=institution,
+        section=section,
+        subjects=subjects,
+        is_admin=is_admin,
+        back_url=url_for("teacher_reports"),
+    )
+
+
+@app.get("/teacher/reports/section/<int:section_id>/subject/<int:subject_id>")
+@teacher_required
+def teacher_section_subject_report(section_id, subject_id):
+    with get_db() as conn:
+        institution = setting(conn, "institution_name")
+        section, subject, evaluation, rows, is_admin = teacher_section_subject_report_rows(conn, section_id, subject_id)
+        if not section or not subject:
+            abort(404)
+    return render_template(
+        "teacher_report.html",
+        mode="subject",
+        report_title=f"{section['name']} · {subject['name']}",
+        report_subtitle=f"Evaluación: {evaluation['title']}" if evaluation else "Sin evaluación disponible",
+        institution=institution,
+        section=section,
+        subject=subject,
+        evaluation=evaluation,
+        rows=rows,
+        is_admin=is_admin,
+        scope_note="Documento emitido con los datos visibles para tu cuenta." if not is_admin else "Documento emitido con acceso completo de administración.",
+        back_url=url_for("teacher_section_report", section_id=section_id),
+    )
 
 
 def insert_question_row(conn, qid, values, is_active, prompt_override=None):
@@ -2714,7 +3170,10 @@ def insert_question_row(conn, qid, values, is_active, prompt_override=None):
     columns = table_columns(conn, "question_bank")
     prompt = prompt_override if prompt_override is not None else values["prompt"]
     if "unit" in columns and "unit_label" in columns:
-        category = conn.execute("SELECT name FROM categories WHERE id=%s", (values["category_id"],)).fetchone()
+        category = conn.execute(
+            "SELECT name FROM categories WHERE id=%s AND teacher_id=%s",
+            (values["category_id"], current_teacher_id()),
+        ).fetchone()
         unit_label = category["name"] if category else "Category"
         conn.execute(
             """INSERT INTO question_bank
@@ -2745,8 +3204,8 @@ def normalize_question_form(existing=None):
     with get_db() as conn:
         category = conn.execute(
             """SELECT c.id, c.subject_id FROM categories c JOIN subjects s ON s.id=c.subject_id
-               WHERE c.id=%s AND c.subject_id=%s AND c.is_archived=0 AND s.is_archived=0""",
-            (category_id, subject_id),
+               WHERE c.id=%s AND c.subject_id=%s AND c.teacher_id=%s AND c.is_archived=0 AND s.is_archived=0 AND s.teacher_id=%s""",
+            (category_id, subject_id, current_teacher_id(), current_teacher_id()),
         ).fetchone()
     if not category:
         raise ValueError(tr("The selected category does not belong to that subject."))
@@ -2856,10 +3315,16 @@ def normalize_question_form(existing=None):
 
 def question_form_view(question=None):
     with get_db() as conn:
-        subjects = conn.execute("SELECT * FROM subjects WHERE is_archived=0 ORDER BY name").fetchall()
+        subject_filter, subject_params = subject_teacher_clause(conn, "s", current_teacher_id())
+        category_filter, category_params = category_teacher_clause(conn, "c", current_teacher_id())
+        subjects = conn.execute(
+            f"SELECT * FROM subjects s WHERE s.is_archived=0{subject_filter} ORDER BY s.name",
+            tuple(subject_params),
+        ).fetchall()
         categories = conn.execute(
-            """SELECT c.*, s.name AS subject_name FROM categories c JOIN subjects s ON s.id=c.subject_id
-               WHERE c.is_archived=0 AND s.is_archived=0 ORDER BY s.name, c.sort_order, c.name"""
+            f"""SELECT c.*, s.name AS subject_name FROM categories c JOIN subjects s ON s.id=c.subject_id
+               WHERE c.is_archived=0 AND s.is_archived=0{category_filter}{subject_filter} ORDER BY s.name, c.sort_order, c.name""",
+            tuple(category_params + subject_params),
         ).fetchall()
     form_question = None
     if question is not None:
@@ -2915,11 +3380,17 @@ def teacher_questions():
         WHERE {' AND '.join(clauses)} ORDER BY s.name, c.sort_order, c.name, q.type, q.updated_at DESC
     """
     with get_db() as conn:
+        subject_filter, subject_params = subject_teacher_clause(conn, "s", current_teacher_id())
+        category_filter, category_params = category_teacher_clause(conn, "c", current_teacher_id())
         rows = conn.execute(sql, params).fetchall()
-        subjects = conn.execute("SELECT * FROM subjects WHERE is_archived=0 ORDER BY name").fetchall()
+        subjects = conn.execute(
+            f"SELECT * FROM subjects s WHERE s.is_archived=0{subject_filter} ORDER BY s.name",
+            tuple(subject_params),
+        ).fetchall()
         categories = conn.execute(
-            """SELECT c.*, s.name AS subject_name FROM categories c JOIN subjects s ON s.id=c.subject_id
-               WHERE c.is_archived=0 AND s.is_archived=0 ORDER BY s.name, c.sort_order, c.name"""
+            f"""SELECT c.*, s.name AS subject_name FROM categories c JOIN subjects s ON s.id=c.subject_id
+               WHERE c.is_archived=0 AND s.is_archived=0{category_filter}{subject_filter} ORDER BY s.name, c.sort_order, c.name""",
+            tuple(category_params + subject_params),
         ).fetchall()
         active_counts = {row["type"]: row["n"] for row in conn.execute(
             "SELECT type, COUNT(*) AS n FROM question_bank WHERE teacher_id=%s AND is_archived=0 GROUP BY type", (current_teacher_id(),)
@@ -2943,37 +3414,61 @@ QUESTION_TYPE_ALIASES = {
 }
 
 
-def resolve_csv_subject_category(conn, row, default_subject_id=None, default_category_id=None):
+def resolve_csv_subject_category(conn, row, default_subject_id=None, default_category_id=None, teacher_id=None):
+    teacher_id = csv_teacher_scope(conn, teacher_id)
+    subject_filter, subject_params = subject_teacher_clause(conn, "s", teacher_id)
+    category_filter, category_params = category_teacher_clause(conn, "c", teacher_id)
     subject_value = csv_cell(row, "Asignatura", "Subject")
     category_value = csv_cell(row, "Categoria", "Category")
     subject = None
     if subject_value:
         if subject_value.isdigit():
-            subject = conn.execute("SELECT * FROM subjects WHERE id=%s AND is_archived=0", (int(subject_value),)).fetchone()
+            subject = conn.execute(
+                f"SELECT * FROM subjects s WHERE s.id=%s AND s.is_archived=0{subject_filter}",
+                (int(subject_value), *subject_params),
+            ).fetchone()
         if not subject:
-            subject = conn.execute("SELECT * FROM subjects WHERE name=%s  AND is_archived=0", (subject_value,)).fetchone()
+            subject = conn.execute(
+                f"SELECT * FROM subjects s WHERE s.name=%s AND s.is_archived=0{subject_filter}",
+                (subject_value, *subject_params),
+            ).fetchone()
     elif default_subject_id:
-        subject = conn.execute("SELECT * FROM subjects WHERE id=%s AND is_archived=0", (default_subject_id,)).fetchone()
+        subject = conn.execute(
+            f"SELECT * FROM subjects s WHERE s.id=%s AND s.is_archived=0{subject_filter}",
+            (default_subject_id, *subject_params),
+        ).fetchone()
     elif default_category_id:
-        subject = conn.execute("""SELECT s.* FROM subjects s JOIN categories c ON c.subject_id=s.id
-                                  WHERE c.id=%s AND c.is_archived=0 AND s.is_archived=0""", (default_category_id,)).fetchone()
+        subject = conn.execute(
+            f"""SELECT s.* FROM subjects s JOIN categories c ON c.subject_id=s.id
+                                  WHERE c.id=%s AND c.is_archived=0 AND s.is_archived=0{category_filter}{subject_filter}""",
+            (default_category_id, *category_params, *subject_params),
+        ).fetchone()
     if not subject:
         raise ValueError("Asignatura no encontrada" if get_ui_language() == "es" else "Subject not found")
     category = None
     if category_value:
         if category_value.isdigit():
-            category = conn.execute("SELECT * FROM categories WHERE id=%s AND subject_id=%s AND is_archived=0", (int(category_value), subject["id"])).fetchone()
+            category = conn.execute(
+                f"SELECT * FROM categories c WHERE c.id=%s AND c.subject_id=%s AND c.is_archived=0{category_filter}",
+                (int(category_value), subject["id"], *category_params),
+            ).fetchone()
         if not category:
-            category = conn.execute("SELECT * FROM categories WHERE subject_id=%s AND name=%s  AND is_archived=0", (subject["id"], category_value)).fetchone()
+            category = conn.execute(
+                f"SELECT * FROM categories c WHERE c.subject_id=%s AND c.name=%s AND c.is_archived=0{category_filter}",
+                (subject["id"], category_value, *category_params),
+            ).fetchone()
     elif default_category_id:
-        category = conn.execute("SELECT * FROM categories WHERE id=%s AND subject_id=%s AND is_archived=0", (default_category_id, subject["id"])).fetchone()
+        category = conn.execute(
+            f"SELECT * FROM categories c WHERE c.id=%s AND c.subject_id=%s AND c.is_archived=0{category_filter}",
+            (default_category_id, subject["id"], *category_params),
+        ).fetchone()
     if not category:
         raise ValueError("Categoría no encontrada" if get_ui_language() == "es" else "Category not found")
     return subject, category
 
 
-def question_values_from_csv(conn, row, default_subject_id=None, default_category_id=None):
-    subject, category = resolve_csv_subject_category(conn, row, default_subject_id, default_category_id)
+def question_values_from_csv(conn, row, default_subject_id=None, default_category_id=None, teacher_id=None):
+    subject, category = resolve_csv_subject_category(conn, row, default_subject_id, default_category_id, teacher_id)
     raw_type = normalize_csv_key(csv_cell(row, "Tipo", "Type"))
     qtype = QUESTION_TYPE_ALIASES.get(raw_type)
     if not qtype:
@@ -3304,25 +3799,50 @@ def teacher_questions_bulk():
 def teacher_catalog():
     teacher_id = current_teacher_id()
     with get_db() as conn:
+        subject_filter, subject_params = subject_teacher_clause(conn, "s", teacher_id)
+        category_filter, category_params = category_teacher_clause(conn, "c", teacher_id)
         subjects = conn.execute(
-            """SELECT s.*, COUNT(DISTINCT c.id) AS category_count, COUNT(DISTINCT q.id) AS question_count
+            f"""SELECT s.*, COUNT(DISTINCT c.id) AS category_count, COUNT(DISTINCT q.id) AS question_count
                FROM subjects s
-               LEFT JOIN categories c ON c.subject_id=s.id AND c.is_archived=0
+               LEFT JOIN categories c ON c.subject_id=s.id AND c.is_archived=0{category_filter}
                LEFT JOIN question_bank q ON q.subject_id=s.id AND q.teacher_id=%s AND q.is_archived=0
-               WHERE s.is_archived=0 GROUP BY s.id ORDER BY s.name""", (teacher_id,)
+               WHERE s.is_archived=0{subject_filter} GROUP BY s.id ORDER BY s.name""",
+            tuple(category_params + [teacher_id] + subject_params),
         ).fetchall()
+    return render_template("teacher_catalog.html", subjects=subjects, selected_subject=None, categories=[])
+
+
+@app.get("/teacher/catalog/subject/<int:subject_id>")
+@teacher_required
+def teacher_catalog_subject(subject_id):
+    teacher_id = current_teacher_id()
+    with get_db() as conn:
+        subject_filter, subject_params = subject_teacher_clause(conn, "s", teacher_id)
+        category_filter, category_params = category_teacher_clause(conn, "c", teacher_id)
+        subjects = conn.execute(
+            f"""SELECT s.*, COUNT(DISTINCT c.id) AS category_count, COUNT(DISTINCT q.id) AS question_count
+               FROM subjects s
+               LEFT JOIN categories c ON c.subject_id=s.id AND c.is_archived=0{category_filter}
+               LEFT JOIN question_bank q ON q.subject_id=s.id AND q.teacher_id=%s AND q.is_archived=0
+               WHERE s.is_archived=0{subject_filter} GROUP BY s.id ORDER BY s.name""",
+            tuple(category_params + [teacher_id] + subject_params),
+        ).fetchall()
+        selected_subject = next((row for row in subjects if row["id"] == subject_id), None)
+        if selected_subject is None:
+            abort(404)
         categories = conn.execute(
-            """SELECT c.*, s.name AS subject_name, COUNT(q.id) AS question_count
-               FROM categories c JOIN subjects s ON s.id=c.subject_id
+            f"""SELECT c.*, COUNT(q.id) AS question_count
+               FROM categories c
                LEFT JOIN question_bank q ON q.category_id=c.id AND q.teacher_id=%s AND q.is_archived=0
-               WHERE c.is_archived=0 AND s.is_archived=0
-               GROUP BY c.id, s.id ORDER BY s.name,c.sort_order,c.name""", (teacher_id,)
+               WHERE c.is_archived=0 AND c.subject_id=%s{category_filter}
+               GROUP BY c.id ORDER BY c.sort_order,c.name""",
+            tuple([teacher_id, selected_subject["id"]] + category_params),
         ).fetchall()
-    return render_template("teacher_catalog.html", subjects=subjects, categories=categories)
+    return render_template("teacher_catalog.html", subjects=subjects, categories=categories, selected_subject=selected_subject)
 
 
 @app.post("/teacher/subjects/new")
-@admin_required
+@teacher_required
 def teacher_subject_new():
     verify_csrf()
     name = " ".join(request.form.get("name", "").strip().split())
@@ -3334,8 +3854,8 @@ def teacher_subject_new():
     try:
         with get_db() as conn:
             conn.execute(
-                "INSERT INTO subjects(name,description,created_at,updated_at) VALUES(%s,%s,%s,%s)",
-                (name, description, timestamp, timestamp),
+                "INSERT INTO subjects(teacher_id,name,description,is_archived,created_at,updated_at) VALUES(%s,%s,%s,0,%s,%s)",
+                (current_teacher_id(), name, description, timestamp, timestamp),
             )
             conn.commit()
         flash_ui("Subject created.", "success")
@@ -3345,7 +3865,7 @@ def teacher_subject_new():
 
 
 @app.post("/teacher/subjects/<int:subject_id>/edit")
-@admin_required
+@teacher_required
 def teacher_subject_edit(subject_id):
     verify_csrf()
     name = " ".join(request.form.get("name", "").strip().split())
@@ -3355,7 +3875,10 @@ def teacher_subject_edit(subject_id):
         return redirect(url_for("teacher_catalog"))
     try:
         with get_db() as conn:
-            conn.execute("UPDATE subjects SET name=%s,description=%s,updated_at=%s WHERE id=%s AND is_archived=0", (name, description, now_iso(), subject_id))
+            conn.execute(
+                "UPDATE subjects SET name=%s,description=%s,updated_at=%s WHERE id=%s AND teacher_id=%s AND is_archived=0",
+                (name, description, now_iso(), subject_id, current_teacher_id()),
+            )
             conn.commit()
         flash_ui("Subject updated.", "success")
     except IntegrityError:
@@ -3364,20 +3887,26 @@ def teacher_subject_edit(subject_id):
 
 
 @app.post("/teacher/subjects/<int:subject_id>/archive")
-@admin_required
+@teacher_required
 def teacher_subject_archive(subject_id):
     verify_csrf()
     with get_db() as conn:
-        subject = conn.execute("SELECT id,name FROM subjects WHERE id=%s AND is_archived=0", (subject_id,)).fetchone()
+        subject = conn.execute(
+            "SELECT id,name FROM subjects WHERE id=%s AND teacher_id=%s AND is_archived=0",
+            (subject_id, current_teacher_id()),
+        ).fetchone()
         if not subject:
             abort(404)
-        remaining = conn.execute("SELECT id FROM subjects WHERE is_archived=0 AND id<>%s ORDER BY name", (subject_id,)).fetchall()
+        remaining = conn.execute(
+            "SELECT id FROM subjects WHERE teacher_id=%s AND is_archived=0 AND id<>%s ORDER BY name",
+            (current_teacher_id(), subject_id),
+        ).fetchall()
         if not remaining:
             flash_ui("At least one active subject must remain.", "error")
             return redirect(url_for("teacher_catalog"))
-        conn.execute("UPDATE subjects SET is_archived=1,updated_at=%s WHERE id=%s", (now_iso(), subject_id))
-        conn.execute("UPDATE categories SET is_archived=1,updated_at=%s WHERE subject_id=%s", (now_iso(), subject_id))
-        conn.execute("UPDATE question_bank SET is_active=0,is_archived=1,updated_at=%s WHERE subject_id=%s", (now_iso(), subject_id))
+        conn.execute("UPDATE subjects SET is_archived=1,updated_at=%s WHERE id=%s AND teacher_id=%s", (now_iso(), subject_id, current_teacher_id()))
+        conn.execute("UPDATE categories SET is_archived=1,updated_at=%s WHERE subject_id=%s AND teacher_id=%s", (now_iso(), subject_id, current_teacher_id()))
+        conn.execute("UPDATE question_bank SET is_active=0,is_archived=1,updated_at=%s WHERE subject_id=%s AND teacher_id=%s", (now_iso(), subject_id, current_teacher_id()))
         current = setting(conn, "current_subject_id")
         if str(current) == str(subject_id):
             conn.execute("UPDATE app_settings SET value=%s WHERE key='current_subject_id'", (str(remaining[0]["id"]),))
@@ -3387,7 +3916,7 @@ def teacher_subject_archive(subject_id):
 
 
 @app.post("/teacher/categories/new")
-@admin_required
+@teacher_required
 def teacher_category_new():
     verify_csrf()
     try:
@@ -3404,13 +3933,13 @@ def teacher_category_new():
     timestamp = now_iso()
     try:
         with get_db() as conn:
-            exists = conn.execute("SELECT 1 FROM subjects WHERE id=%s AND is_archived=0", (subject_id,)).fetchone()
+            exists = conn.execute("SELECT 1 FROM subjects WHERE id=%s AND teacher_id=%s AND is_archived=0", (subject_id, current_teacher_id())).fetchone()
             if not exists:
                 flash_ui("Selected subject does not exist.", "error")
                 return redirect(url_for("teacher_catalog"))
             conn.execute(
-                "INSERT INTO categories(subject_id,name,description,sort_order,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s)",
-                (subject_id, name, description, sort_order, timestamp, timestamp),
+                "INSERT INTO categories(teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,0,%s,%s)",
+                (current_teacher_id(), subject_id, name, description, sort_order, timestamp, timestamp),
             )
             conn.commit()
         flash_ui("Category created.", "success")
@@ -3420,7 +3949,7 @@ def teacher_category_new():
 
 
 @app.post("/teacher/categories/<int:category_id>/edit")
-@admin_required
+@teacher_required
 def teacher_category_edit(category_id):
     verify_csrf()
     try:
@@ -3436,11 +3965,15 @@ def teacher_category_edit(category_id):
         return redirect(url_for("teacher_catalog"))
     try:
         with get_db() as conn:
+            exists = conn.execute("SELECT 1 FROM subjects WHERE id=%s AND teacher_id=%s AND is_archived=0", (subject_id, current_teacher_id())).fetchone()
+            if not exists:
+                flash_ui("Choose a valid subject.", "error")
+                return redirect(url_for("teacher_catalog"))
             conn.execute(
-                "UPDATE categories SET subject_id=%s,name=%s,description=%s,sort_order=%s,updated_at=%s WHERE id=%s AND is_archived=0",
-                (subject_id, name, description, sort_order, now_iso(), category_id),
+                "UPDATE categories SET teacher_id=%s,subject_id=%s,name=%s,description=%s,sort_order=%s,updated_at=%s WHERE id=%s AND teacher_id=%s AND is_archived=0",
+                (current_teacher_id(), subject_id, name, description, sort_order, now_iso(), category_id, current_teacher_id()),
             )
-            conn.execute("UPDATE question_bank SET subject_id=%s,updated_at=%s WHERE category_id=%s", (subject_id, now_iso(), category_id))
+            conn.execute("UPDATE question_bank SET subject_id=%s,updated_at=%s WHERE category_id=%s AND teacher_id=%s", (subject_id, now_iso(), category_id, current_teacher_id()))
             conn.commit()
         flash_ui("Category updated.", "success")
     except IntegrityError:
@@ -3449,15 +3982,15 @@ def teacher_category_edit(category_id):
 
 
 @app.post("/teacher/categories/<int:category_id>/archive")
-@admin_required
+@teacher_required
 def teacher_category_archive(category_id):
     verify_csrf()
     with get_db() as conn:
-        category = conn.execute("SELECT id FROM categories WHERE id=%s AND is_archived=0", (category_id,)).fetchone()
+        category = conn.execute("SELECT id FROM categories WHERE id=%s AND teacher_id=%s AND is_archived=0", (category_id, current_teacher_id())).fetchone()
         if not category:
             abort(404)
-        conn.execute("UPDATE categories SET is_archived=1,updated_at=%s WHERE id=%s", (now_iso(), category_id))
-        conn.execute("UPDATE question_bank SET is_active=0,is_archived=1,updated_at=%s WHERE category_id=%s", (now_iso(), category_id))
+        conn.execute("UPDATE categories SET is_archived=1,updated_at=%s WHERE id=%s AND teacher_id=%s", (now_iso(), category_id, current_teacher_id()))
+        conn.execute("UPDATE question_bank SET is_active=0,is_archived=1,updated_at=%s WHERE category_id=%s AND teacher_id=%s", (now_iso(), category_id, current_teacher_id()))
         conn.commit()
     flash_ui("Category archived.", "success")
     return redirect(url_for("teacher_catalog"))
@@ -3472,19 +4005,287 @@ def exam_row(conn, exam_id):
     ).fetchone()
 
 
+def printable_question_row(row, rng=None):
+    data = json.loads(row["data_json"] or "{}")
+    item = {"type": row["type"], "prompt": row["prompt"]}
+    if row["type"] in {"multiple_choice", "true_false", "listening"}:
+        choices = [list(choice) for choice in data.get("choices", [])]
+        if rng is not None:
+            rng.shuffle(choices)
+        item["choices"] = choices
+    elif row["type"] == "order":
+        items = [list(value) for value in data.get("items", [])]
+        if rng is not None:
+            rng.shuffle(items)
+        item["items"] = items
+    elif row["type"] == "matching":
+        left = [list(value) for value in data.get("left", [])]
+        right = [list(value) for value in data.get("right", [])]
+        if rng is not None:
+            rng.shuffle(left)
+            rng.shuffle(right)
+        item["left"] = left
+        item["right"] = right
+    return item
+
+
+def exam_version_questions_pdf_rows(conn, version_id):
+    return conn.execute(
+        """SELECT q.*, s.name AS subject_name, c.name AS category_name
+           FROM exam_version_questions evq
+           JOIN question_bank q ON q.id=evq.question_id
+           JOIN subjects s ON s.id=q.subject_id
+           JOIN categories c ON c.id=q.category_id
+          WHERE evq.version_id=%s AND q.teacher_id=%s
+          ORDER BY evq.position, q.created_at, q.id""",
+        (version_id, current_teacher_id()),
+    ).fetchall()
+
+
+def exam_export_payload(conn, exam_id):
+    exam = exam_row(conn, exam_id)
+    if not exam:
+        abort(404)
+    versions = conn.execute(
+        """SELECT id,name FROM exam_versions
+           WHERE exam_id=%s AND is_active=1 ORDER BY id""",
+        (exam_id,),
+    ).fetchall()
+    if not versions:
+        abort(404)
+    institution = setting(conn, "institution_name")
+    teacher = current_teacher(conn)
+    teacher_name = teacher["full_name"] if teacher else session.get("teacher_name", "Teacher")
+    language = get_ui_language()
+    rt = lambda text: tr(text, language=language)
+    version_payloads = []
+    for version in versions:
+        rows = exam_version_questions_pdf_rows(conn, version["id"])
+        questions = []
+        for row in rows:
+            rng = random.Random(f"{exam['id']}:{version['id']}:{row['id']}")
+            questions.append(printable_question_row(row, rng))
+        version_payloads.append({"version": version, "questions": questions})
+    return exam, institution, teacher_name, rt, version_payloads
+
+
+def exam_export_filename(exam, extension):
+    base = secure_filename(exam["title"]) or "exam"
+    return f"{base}.{extension}"
+
+
+def markdown_escape(text):
+    return str(text or "").replace("\r", "").strip()
+
+
+def docx_paragraph(runs, keep_next=False, keep_lines=False, space_before=0, space_after=0):
+    props = []
+    if keep_next:
+        props.append("<w:keepNext/>")
+    if keep_lines:
+        props.append("<w:keepLines/>")
+    if space_before or space_after:
+        props.append(f'<w:spacing w:before="{space_before}" w:after="{space_after}"/>')
+    ppr = f"<w:pPr>{''.join(props)}</w:pPr>" if props else ""
+    return f"<w:p>{ppr}{''.join(runs)}</w:p>"
+
+
+def docx_table(cells, col_widths):
+    grid = ''.join(f'<w:gridCol w:w="{width}"/>' for width in col_widths)
+    rows = []
+    for row_index, row in enumerate(cells):
+        row_props = '<w:trPr><w:tblHeader/><w:cantSplit/></w:trPr>' if row_index == 0 else '<w:trPr><w:cantSplit/></w:trPr>'
+        row_cells = []
+        for col_index, cell in enumerate(row):
+            width = col_widths[col_index]
+            row_cells.append(
+                f'<w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/></w:tcPr>'
+                f'{docx_paragraph([docx_run(cell["text"], bold=cell.get("bold", False))], space_before=0, space_after=0)}'
+                '</w:tc>'
+            )
+        rows.append(f'<w:tr>{row_props}{"".join(row_cells)}</w:tr>')
+    return (
+        '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>'
+        '<w:tblBorders>'
+        '<w:top w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>'
+        '<w:left w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>'
+        '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>'
+        '<w:right w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>'
+        '<w:insideH w:val="single" w:sz="2" w:space="0" w:color="E2E8F0"/>'
+        '<w:insideV w:val="single" w:sz="2" w:space="0" w:color="E2E8F0"/>'
+        '</w:tblBorders></w:tblPr>'
+        f'<w:tblGrid>{grid}</w:tblGrid>'
+        f'{"".join(rows)}</w:tbl>'
+    )
+
+
+def exam_question_markdown(question, question_number, rt):
+    lines = [f"### {question_number}. {markdown_escape(question['prompt'])}"]
+    if question["type"] in {"multiple_choice", "true_false", "listening"}:
+        lines.append("")
+        lines.append("#### Choices")
+        for choice_index, (_, choice_text) in enumerate(question.get("choices", [])):
+            lines.append(f"- {pdf_choice_letter(choice_index)}. {markdown_escape(choice_text)}")
+    elif question["type"] == "order":
+        lines.append("")
+        lines.append(f"#### {rt('Order line')}")
+        for _, item_text in question.get("items", []):
+            lines.append(f"- {markdown_escape(item_text)}")
+        lines.append("- ________________________________________________")
+    elif question["type"] == "matching":
+        lines.append("")
+        lines.append(f"#### {rt('Left items')}")
+        for _, item_text in question.get("left", []):
+            lines.append(f"- {markdown_escape(item_text)}")
+        lines.append("")
+        lines.append(f"#### {rt('Right items')}")
+        for _, item_text in question.get("right", []):
+            lines.append(f"- {markdown_escape(item_text)}")
+    else:
+        lines.append("")
+        lines.append(f"#### {rt('Answer line')}")
+        lines.append("_______________________________________________")
+    return "\n".join(lines)
+
+
+def exam_markdown_export(exam, institution, teacher_name, rt, version_payloads):
+    parts = [
+        f"# {markdown_escape(exam['title'])}",
+        "",
+        f"- {rt('Institution')}: {markdown_escape(institution)}",
+        f"- {rt('Subject')}: {markdown_escape(exam['subject_name'] or '')}",
+        f"- {rt('Teacher')}: {markdown_escape(teacher_name)}",
+    ]
+    for index, payload in enumerate(version_payloads):
+        version = payload["version"]
+        questions = payload["questions"]
+        parts.extend([
+            "",
+            f"## {rt('Version')} {markdown_escape(version['name'])}",
+            "",
+            f"### {rt('Questions')} ({len(questions)})",
+        ])
+        for q_index, question in enumerate(questions, start=1):
+            parts.extend(["", exam_question_markdown(question, q_index, rt)])
+        if index < len(version_payloads) - 1:
+            parts.append("")
+    parts.append("")
+    return "\n".join(parts)
+
+
+def docx_run(text, bold=False):
+    props = "<w:rPr><w:b/></w:rPr>" if bold else ""
+    return f"<w:r>{props}<w:t xml:space=\"preserve\">{xml_escape(str(text or ''))}</w:t></w:r>"
+def docx_page_break():
+    return "<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>"
+
+
+def exam_docx_export(exam, institution, teacher_name, rt, version_payloads):
+    paragraphs = [
+        docx_paragraph([docx_run(institution, bold=True)], keep_next=True, space_after=30),
+        docx_paragraph([docx_run(exam["title"], bold=True)], keep_next=True, space_after=90),
+        docx_paragraph([docx_run(f"{rt('Institution')}: ", bold=True), docx_run(institution)], keep_next=True, space_after=0),
+        docx_paragraph([docx_run(f"{rt('Subject')}: ", bold=True), docx_run(exam["subject_name"] or "")], keep_next=True, space_after=0),
+        docx_paragraph([docx_run(f"{rt('Teacher')}: ", bold=True), docx_run(teacher_name)], keep_next=True, space_after=0),
+    ]
+    for index, payload in enumerate(version_payloads):
+        version = payload["version"]
+        questions = payload["questions"]
+        paragraphs.extend([
+            docx_paragraph([docx_run(f"{rt('Version')} {version['name']}", bold=True)], keep_next=True, space_before=120, space_after=30),
+            docx_paragraph([docx_run(f"{rt('Questions')} ({len(questions)})", bold=True)], keep_next=True, space_after=60),
+        ])
+        for q_index, question in enumerate(questions, start=1):
+            paragraphs.append(docx_paragraph([docx_run(f"{q_index}. {question['prompt']}", bold=True)], keep_next=True, space_before=90, space_after=30))
+            if question["type"] in {"multiple_choice", "true_false", "listening"}:
+                for choice_index, (_, choice_text) in enumerate(question.get("choices", [])):
+                    paragraphs.append(docx_paragraph([docx_run(f"{pdf_choice_letter(choice_index)}. ", bold=True), docx_run(choice_text)], space_before=0, space_after=0))
+            elif question["type"] == "order":
+                for _, item_text in question.get("items", []):
+                    paragraphs.append(docx_paragraph([docx_run(f"• {item_text}")], space_before=0, space_after=0))
+                paragraphs.append(docx_paragraph([docx_run(f"{rt('Order line')}: ________________________________________________")], space_before=0, space_after=0))
+            elif question["type"] == "matching":
+                left_items = [text for _, text in question.get("left", [])]
+                right_items = [text for _, text in question.get("right", [])]
+                max_rows = max(len(left_items), len(right_items))
+                table_rows = [[{"text": rt('Left items'), "bold": True}, {"text": rt('Right items'), "bold": True}]]
+                for idx in range(max_rows):
+                    table_rows.append([
+                        {"text": left_items[idx] if idx < len(left_items) else ""},
+                        {"text": right_items[idx] if idx < len(right_items) else ""},
+                    ])
+                paragraphs.append(docx_table(table_rows, [4320, 4320]))
+            else:
+                paragraphs.append(docx_paragraph([docx_run(f"{rt('Answer line')}: ________________________________________________")], space_before=0, space_after=0))
+        if index < len(version_payloads) - 1:
+            paragraphs.append(docx_page_break())
+    body = "".join(paragraphs) + (
+        '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="864" w:right="936" w:bottom="864" w:left="936" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr>'
+    )
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f'<w:body>{body}</w:body></w:document>'
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        '</Types>'
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+        '</Relationships>'
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types)
+        zf.writestr("_rels/.rels", rels)
+        zf.writestr("word/document.xml", document)
+    buffer.seek(0)
+    return buffer
+
+
+def exam_pdf_page_number(canvas, doc):
+    canvas.saveState()
+    canvas.setFont("Helvetica", 9)
+    canvas.drawRightString(letter[0] - 0.65 * inch, 0.4 * inch, f"Page {canvas.getPageNumber()}")
+    canvas.restoreState()
+
+
+def pdf_choice_letter(index):
+    label = ""
+    while True:
+        index, remainder = divmod(index, 26)
+        label = chr(65 + remainder) + label
+        if index == 0:
+            return label
+        index -= 1
+
+
 @app.get("/teacher/exams")
 @teacher_required
 def teacher_exams():
     with get_db() as conn:
+        subject_filter, subject_params = subject_teacher_clause(conn, "s", current_teacher_id())
+        row_params = [current_teacher_id()] + (subject_params if subject_filter else [])
         rows = conn.execute(
-            """SELECT e.*,s.name AS subject_name,
+            f"""SELECT e.*,s.name AS subject_name,
                       (SELECT COUNT(*) FROM exam_versions v WHERE v.exam_id=e.id AND v.is_active=1) AS version_count,
                       (SELECT COUNT(*) FROM exam_assignments a WHERE a.exam_id=e.id AND a.is_active=1) AS assignment_count,
                       (SELECT COUNT(*) FROM attempts t WHERE t.exam_id=e.id AND t.status='submitted') AS result_count
                FROM exams e JOIN subjects s ON s.id=e.subject_id
-               WHERE e.teacher_id=%s AND e.is_archived=0 ORDER BY e.updated_at DESC,e.title """, (current_teacher_id(),)
+               WHERE e.teacher_id=%s AND e.is_archived=0{subject_filter} ORDER BY e.updated_at DESC,e.title """,
+            tuple(row_params),
         ).fetchall()
-        subjects = conn.execute("SELECT * FROM subjects WHERE is_archived=0 ORDER BY name ").fetchall()
+        subjects = conn.execute(
+            f"SELECT * FROM subjects s WHERE s.is_archived=0{subject_filter} ORDER BY s.name ",
+            tuple(subject_params),
+        ).fetchall()
     return render_template("teacher_exams.html", rows=rows, subjects=subjects)
 
 
@@ -3499,7 +4300,11 @@ def teacher_exam_new():
     except ValueError:
         subject_id = 0
     with get_db() as conn:
-        valid = conn.execute("SELECT 1 FROM subjects WHERE id=%s AND is_archived=0", (subject_id,)).fetchone()
+        subject_filter, subject_params = subject_teacher_clause(conn, "s", current_teacher_id())
+        valid = conn.execute(
+            f"SELECT 1 FROM subjects s WHERE s.id=%s AND s.is_archived=0{subject_filter}",
+            (subject_id, *subject_params),
+        ).fetchone()
         if not title or not valid:
             flash_ui("Exam title and a valid subject are required.", "error")
             return redirect(url_for("teacher_exams"))
@@ -3549,7 +4354,8 @@ def teacher_exam_detail(exam_id):
                WHERE a.exam_id=%s AND a.is_active=1 AND sec.is_archived=0 ORDER BY sec.name""", (exam_id,)
         ).fetchall()
         sections = conn.execute("SELECT * FROM sections WHERE is_archived=0 ORDER BY name ").fetchall()
-        subjects = conn.execute("SELECT * FROM subjects WHERE is_archived=0 ORDER BY name").fetchall()
+        subject_filter, subject_params = subject_teacher_clause(conn, "s", current_teacher_id())
+        subjects = conn.execute(f"SELECT * FROM subjects s WHERE s.is_archived=0{subject_filter} ORDER BY s.name", tuple(subject_params)).fetchall()
     return render_template(
         "teacher_exam_detail.html",
         exam=exam_row_data,
@@ -3559,6 +4365,126 @@ def teacher_exam_detail(exam_id):
         sections=sections,
         subjects=subjects,
         exam_edit_meta=exam_edit_meta,
+    )
+
+
+@app.get("/teacher/exams/<int:exam_id>/pdf")
+@teacher_required
+def teacher_exam_pdf(exam_id):
+    with get_db() as conn:
+        exam, institution, teacher_name, rt, version_payloads = exam_export_payload(conn, exam_id)
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=0.65 * inch,
+        leftMargin=0.65 * inch,
+        topMargin=0.6 * inch,
+        bottomMargin=0.55 * inch,
+        pageCompression=0,
+    )
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle("ExamInstitution", parent=styles["Heading3"], fontName="Helvetica-Bold", fontSize=10.5, leading=12, textColor=colors.HexColor("#334155"), spaceAfter=2, keepWithNext=1))
+    styles.add(ParagraphStyle("ExamTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=18, leading=20, spaceAfter=4, keepWithNext=1))
+    styles.add(ParagraphStyle("ExamMeta", parent=styles["BodyText"], fontSize=10, leading=12, spaceAfter=1, keepWithNext=1))
+    styles.add(ParagraphStyle("ExamVersion", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=12, leading=14, spaceBefore=6, spaceAfter=4, keepWithNext=1))
+    styles.add(ParagraphStyle("ExamSection", parent=styles["Heading3"], fontName="Helvetica-Bold", fontSize=11, leading=13, spaceBefore=6, spaceAfter=4, keepWithNext=1))
+    styles.add(ParagraphStyle("ExamQuestion", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=10.5, leading=13, spaceBefore=6, spaceAfter=3, keepWithNext=1))
+    styles.add(ParagraphStyle("ExamChoice", parent=styles["BodyText"], fontSize=9.5, leading=11, leftIndent=12, firstLineIndent=0, spaceAfter=0, spaceBefore=0, keepWithNext=1))
+    story = []
+    for index, payload in enumerate(version_payloads):
+        if index:
+            story.append(PageBreak())
+        version = payload["version"]
+        questions = payload["questions"]
+        story.extend([
+            Paragraph(xml_escape(institution), styles["ExamInstitution"]),
+            Paragraph(xml_escape(exam["title"]), styles["ExamTitle"]),
+            Paragraph(f"<b>{rt('Institution')}:</b> {xml_escape(institution)}", styles["ExamMeta"]),
+            Paragraph(f"<b>{rt('Subject')}:</b> {xml_escape(exam['subject_name'] or '')}", styles["ExamMeta"]),
+            Paragraph(f"<b>{rt('Teacher')}:</b> {xml_escape(teacher_name)}", styles["ExamMeta"]),
+            Paragraph(f"<b>{rt('Version')} {xml_escape(version['name'])}</b>", styles["ExamVersion"]),
+            Paragraph(f"<b>{rt('Questions')}</b> ({len(questions)})", styles["ExamSection"]),
+        ])
+        info_table = Table([
+            [Paragraph(f"<b>{rt('Student name')}</b>", styles["BodyText"]), Paragraph("______________________________", styles["BodyText"]), Paragraph(f"<b>{rt('Student ID')}</b>", styles["BodyText"]), Paragraph("________________________", styles["BodyText"])],
+            [Paragraph(f"<b>{rt('Section')}</b>", styles["BodyText"]), Paragraph("______________________________", styles["BodyText"]), Paragraph(f"<b>{rt('Date')}</b>", styles["BodyText"]), Paragraph("________________________", styles["BodyText"])],
+        ], colWidths=[1.05 * inch, 2.45 * inch, 0.8 * inch, 2.0 * inch])
+        info_table.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.extend([
+            info_table,
+            Spacer(1, 10),
+            Paragraph(f"<b>{rt('Instructions')}</b>", styles["Heading3"]),
+            Paragraph(f"1. {rt('Use blue or black ink.')}<br/>2. {rt('Write clearly and keep your answers legible.')}<br/>3. {rt('Do not write on the answer key; this copy is for student use only.')}", styles["BodyText"]),
+            Spacer(1, 10),
+        ])
+        for q_index, question in enumerate(questions, start=1):
+            question_block = [Spacer(1, 4), Paragraph(f"<b>{q_index}. {xml_escape(question['prompt'])}</b>", styles["ExamQuestion"])]
+            if question["type"] in {"multiple_choice", "true_false", "listening"}:
+                for choice_index, (_, choice_text) in enumerate(question.get("choices", [])):
+                    question_block.append(Paragraph(f"<b>{pdf_choice_letter(choice_index)}.</b> {xml_escape(choice_text)}", styles["ExamChoice"]))
+            elif question["type"] == "order":
+                for item_id, item_text in question.get("items", []):
+                    question_block.append(Paragraph(f"• {xml_escape(item_text)}", styles["ExamChoice"]))
+                question_block.append(Paragraph(f"{rt('Order line')}: ________________________________________________", styles["ExamChoice"]))
+            elif question["type"] == "matching":
+                left_rows = [[Paragraph(f"<b>{rt('Left items')}</b>", styles["ExamChoice"]), Paragraph(f"<b>{rt('Right items')}</b>", styles["ExamChoice"])]]
+                left_items = [text for _, text in question.get("left", [])]
+                right_items = [text for _, text in question.get("right", [])]
+                max_rows = max(len(left_items), len(right_items))
+                for idx in range(max_rows):
+                    left_text = xml_escape(left_items[idx]) if idx < len(left_items) else ""
+                    right_text = xml_escape(right_items[idx]) if idx < len(right_items) else ""
+                    left_rows.append([Paragraph(left_text, styles["ExamChoice"]), Paragraph(right_text, styles["ExamChoice"])])
+                table = Table(left_rows, colWidths=[3.25 * inch, 3.25 * inch], repeatRows=1, splitByRow=1)
+                table.setStyle(TableStyle([
+                    ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#CBD5E1")),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#E2E8F0")),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F8FAFC")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ]))
+                question_block.extend([Spacer(1, 4), table])
+            else:
+                question_block.append(Paragraph(f"{rt('Answer line')}: ________________________________________________", styles["ExamChoice"]))
+            story.append(KeepTogether(question_block))
+        if index < len(version_payloads) - 1:
+            story.append(Spacer(1, 8))
+
+    doc.build(story, onFirstPage=exam_pdf_page_number, onLaterPages=exam_pdf_page_number)
+    buffer.seek(0)
+    return send_file(buffer, as_attachment=True, download_name=exam_export_filename(exam, "pdf"), mimetype="application/pdf")
+
+
+@app.get("/teacher/exams/<int:exam_id>/markdown")
+@teacher_required
+def teacher_exam_markdown(exam_id):
+    with get_db() as conn:
+        exam, institution, teacher_name, rt, version_payloads = exam_export_payload(conn, exam_id)
+    content = exam_markdown_export(exam, institution, teacher_name, rt, version_payloads)
+    buffer = io.BytesIO(content.encode("utf-8"))
+    return send_file(buffer, as_attachment=True, download_name=exam_export_filename(exam, "md"), mimetype="text/markdown")
+
+
+@app.get("/teacher/exams/<int:exam_id>/docx")
+@teacher_required
+def teacher_exam_docx(exam_id):
+    with get_db() as conn:
+        exam, institution, teacher_name, rt, version_payloads = exam_export_payload(conn, exam_id)
+    buffer = exam_docx_export(exam, institution, teacher_name, rt, version_payloads)
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=exam_export_filename(exam, "docx"),
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
 
 
@@ -3578,7 +4504,7 @@ def teacher_exam_edit(exam_id):
     with get_db() as conn:
         exam = exam_row(conn, exam_id)
         if not exam: abort(404)
-        subject = conn.execute("SELECT id FROM subjects WHERE id=%s AND is_archived=0", (subject_id,)).fetchone()
+        subject = conn.execute("SELECT id FROM subjects WHERE id=%s AND teacher_id=%s AND is_archived=0", (subject_id, current_teacher_id())).fetchone()
         if not subject:
             flash_ui("Choose a valid subject.", "error")
             return redirect(url_for("teacher_exam_detail", exam_id=exam_id))
@@ -3748,7 +4674,10 @@ def teacher_exam_version_questions(exam_id,version_id):
                 FROM question_bank q JOIN categories c ON c.id=q.category_id JOIN subjects s ON s.id=q.subject_id
                 LEFT JOIN exam_version_questions evq ON evq.version_id=%s AND evq.question_id=q.id
                 WHERE {' AND '.join(clauses)} ORDER BY selected DESC,c.sort_order,c.name,q.type,q.updated_at DESC""",[version_id,*params]).fetchall()
-        categories=conn.execute("SELECT * FROM categories WHERE subject_id=%s AND is_archived=0 ORDER BY sort_order,name",(exam["subject_id"],)).fetchall()
+        categories=conn.execute(
+            "SELECT * FROM categories WHERE subject_id=%s AND teacher_id=%s AND is_archived=0 ORDER BY sort_order,name",
+            (exam["subject_id"], current_teacher_id()),
+        ).fetchall()
         selected_ids=[r["question_id"] for r in conn.execute("SELECT question_id FROM exam_version_questions WHERE version_id=%s ORDER BY position",(version_id,)).fetchall()]
         unavailable_ids={r["id"] for r in rows if not listening_row_usable(r)}
     return render_template("teacher_version_questions.html",exam=exam,version=version,rows=rows,categories=categories,selected_ids=selected_ids,unavailable_ids=unavailable_ids,type_labels=localized_type_labels(),filters={"q":search,"category":cat,"type":typ})

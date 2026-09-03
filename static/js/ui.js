@@ -201,19 +201,6 @@
 
   const studentModal = document.getElementById('studentEditModal');
   const studentForm = document.getElementById('studentEditForm');
-  document.querySelectorAll('[data-open-student-modal]').forEach((button) => {
-    button.addEventListener('click', () => {
-      if (!studentModal || !studentForm) return;
-      studentForm.action = button.dataset.url || '';
-      studentForm.elements.full_name.value = button.dataset.name || '';
-      studentForm.elements.email.value = button.dataset.email || '';
-      studentForm.elements.section_id.value = button.dataset.sectionId || '';
-      studentForm.elements.student_code.value = button.dataset.code || '';
-      studentForm.elements.notes.value = button.dataset.notes || '';
-      studentForm.elements.is_active.checked = button.dataset.active === '1';
-      openDialog(studentModal);
-    });
-  });
 
   const passwordModal = document.getElementById('passwordResetModal');
   const passwordForm = document.getElementById('passwordResetForm');

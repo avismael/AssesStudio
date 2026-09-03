@@ -1,12 +1,12 @@
 # Assessment Studio
 
-Plataforma institucional bilingüe de evaluaciones construida con Flask, Jinja y PostgreSQL. Permite múltiples cuentas docentes, padrón compartido, bancos de preguntas reutilizables, exámenes con versiones, asignaciones por sección, un intento estable por estudiante, calificación automática, listening, revisión de integridad, penalizaciones manuales auditables y exportaciones PDF/CSV/XLSX.
+Plataforma institucional bilingüe de evaluaciones construida con Flask, Jinja y PostgreSQL. Permite múltiples cuentas docentes, catálogo por docente, padrón institucional administrado por el admin, bancos de preguntas reutilizables, exámenes con versiones, asignaciones por sección, un intento estable por estudiante, calificación automática, listening, revisión de integridad, penalizaciones manuales auditables y exportaciones PDF/CSV/XLSX.
 
 ## Estado actual
 
 - **Implementado:** una institución lógica con docentes múltiples.
-- **Compartido:** `students`, `sections`, `subjects` y `categories`.
-- **Aislado por `teacher_id`:** `question_bank`, `exams`, `attempts` y sus resultados.
+- **Compartido:** `students` y `sections`.
+- **Propio por docente:** `subjects`, `categories`, `question_bank`, `exams`, `attempts` y sus resultados.
 - **Garantías:** allocation estable, snapshot al iniciar, respuestas obligatorias y grading server-side.
 - **Integridad:** la telemetría es un indicador, no una prueba; las penalizaciones son manuales, justificadas, revocables y no alteran la nota académica original.
 - **No implementado:** SaaS multiinstitución, SSO, ventanas de examen, API pública o escalado horizontal.
@@ -119,6 +119,7 @@ La estrategia, matriz manual y gates están en [docs/09-quality-strategy.md](doc
 ## Documentación
 
 - [Manuales de usuario y ejemplos de importación](userdirections/README.md)
+- [Documento maestro de la aplicación](docs/15-documento-de-la-aplicacion.md)
 - [Resumen ejecutivo](docs/00-executive-summary.md)
 - [Producto, negocio y requisitos](docs/01-product-and-business.md)
 - [Arquitectura y datos](docs/05-architecture.md)
@@ -127,4 +128,3 @@ La estrategia, matriz manual y gates están en [docs/09-quality-strategy.md](doc
 - [Referencia completa de rutas](docs/11-api-route-reference.md)
 - [Diagramas](docs/12-diagrams.md)
 - [ADRs](docs/13-adrs.md) y [glosario, gobierno y roadmap](docs/14-glossary-governance-roadmap.md)
-# AssesStudio

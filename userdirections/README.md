@@ -4,7 +4,7 @@
 
 Esta suite está dirigida a administradores institucionales, docentes, estudiantes y personal de apoyo que usa la aplicación. Describe el comportamiento implementado y verificado en el código al **16 de agosto de 2026**. Si la interfaz cambia, debe revisarse esta documentación; ante una diferencia, prevalece la aplicación desplegada y su configuración institucional.
 
-Assessment Studio tiene tres roles reales: `admin`, `teacher` y estudiante. Un administrador también dispone de las funciones docentes sobre su propio contenido, pero no obtiene una vista global para abrir o editar directamente bancos, exámenes o resultados de otros docentes. Sin embargo, las operaciones administrativas sobre el catálogo institucional compartido pueden afectar indirectamente preguntas de todos los docentes; consulte el manual del administrador antes de archivar o reasignar asignaturas y categorías.
+Assessment Studio tiene tres roles reales: `admin`, `teacher` y estudiante. Un administrador también dispone de las funciones docentes sobre su propio contenido, pero no obtiene una vista global para abrir o editar directamente bancos, exámenes o resultados de otros docentes. Las secciones y los estudiantes son institucionales y los administra solo el rol `admin`; las asignaturas y categorías pertenecen a cada docente.
 
 ## Navegación rápida
 
@@ -22,7 +22,8 @@ Assessment Studio tiene tres roles reales: `admin`, `teacher` y estudiante. Un a
 ## Principios comunes
 
 - Las cuentas, permisos y autorizaciones se validan en el servidor.
-- El padrón, las secciones, las asignaturas y las categorías son institucionales y compartidos.
+- El padrón, las secciones y los estudiantes son institucionales y los administra el rol `admin`.
+- Las asignaturas y categorías son propias de cada docente.
 - Cada docente solo administra su banco, exámenes e intentos.
 - Las claves correctas y los guiones de listening no aparecen en el HTML inicial del examen.
 - La telemetría de integridad es un indicador técnico, no una prueba automática de conducta indebida.

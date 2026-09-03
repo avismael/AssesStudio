@@ -2,8 +2,11 @@ import ast
 import csv
 import io
 import json
+import random
 import os
 import re
+import uuid
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -96,14 +99,14 @@ def test_ui_language_is_safe_without_request_context():
 def test_question_clone_keeps_legacy_safe_fields_and_deactivates_copy():
     with app.get_db() as conn:
         stamp = app.now_iso()
-        teacher_id = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()["id"]
+        teacher_id = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()["id"]
         conn.execute(
-            "INSERT INTO subjects(id,name,description,created_at,updated_at) VALUES(22,'Clone Test','',%s,%s)",
-            (stamp, stamp),
+            "INSERT INTO subjects(id,teacher_id,name,description,is_archived,created_at,updated_at) VALUES(22,%s,'Clone Test','',0,%s,%s)",
+            (teacher_id, stamp, stamp),
         )
         conn.execute(
-            "INSERT INTO categories(id,subject_id,name,description,sort_order,created_at,updated_at) VALUES(22,22,'Clone Category','',0,%s,%s)",
-            (stamp, stamp),
+            "INSERT INTO categories(id,teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(22,%s,22,'Clone Category','',0,0,%s,%s)",
+            (teacher_id, stamp, stamp),
         )
         conn.execute(
             """INSERT INTO question_bank
@@ -135,7 +138,7 @@ def test_multi_exam_schema_exists():
 def test_student_login_forces_password_change_then_shows_exam_dashboard():
     with app.get_db() as conn:
         stamp = app.now_iso()
-        teacher_id = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()["id"]
+        teacher_id = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()["id"]
         conn.execute("INSERT INTO sections(id,name,description,is_archived,created_at,updated_at) VALUES(91,'Login Test','',0,%s,%s)", (stamp, stamp))
         conn.execute(
             """INSERT INTO students
@@ -143,8 +146,8 @@ def test_student_login_forces_password_change_then_shows_exam_dashboard():
                VALUES(91,'Login Student',91,'LOGIN-91','login.student@example.com',%s,1,%s,NULL,1,0,%s,%s)""",
             (app.generate_password_hash('TempPass123'), stamp, stamp, stamp),
         )
-        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(92,'Login Subject','',0,%s,%s)", (stamp, stamp))
-        conn.execute("INSERT INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(92,92,'Login Category','',0,0,%s,%s)", (stamp, stamp))
+        conn.execute("INSERT INTO subjects(id,teacher_id,name,description,is_archived,created_at,updated_at) VALUES(92,%s,'Login Subject','',0,%s,%s)", (teacher_id, stamp, stamp))
+        conn.execute("INSERT INTO categories(id,teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(92,%s,92,'Login Category','',0,0,%s,%s)", (teacher_id, stamp, stamp))
         conn.execute(
             """INSERT INTO question_bank
                (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,audio,script,is_active,is_archived,created_at,updated_at)
@@ -201,7 +204,7 @@ def test_one_attempt_unique_per_student_assignment():
 def _teacher_client():
     client = app.app.test_client()
     with app.get_db() as conn:
-        teacher = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()
+        teacher = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()
     with client.session_transaction() as sess:
         sess['teacher_authenticated'] = True
         sess['teacher_id'] = teacher['id']
@@ -218,12 +221,72 @@ def _admin_client(csrf_token='admin-test-token'):
     return client
 
 
+def _reports_fixture():
+    _submission_attempt('report-attempt-a', student_id=9901)
+    _submission_attempt('report-attempt-b', student_id=9902)
+    with app.get_db() as conn:
+        stamp = app.now_iso()
+        conn.execute("UPDATE sections SET name='Sección de informes' WHERE id=990")
+        conn.execute(
+            """UPDATE attempts SET submitted_at=%s,score=8,total=10,percentage=80,grade10=8,
+               status='submitted' WHERE id='report-attempt-a'""",
+            (stamp,),
+        )
+        conn.execute(
+            """UPDATE attempts SET submitted_at=%s,score=9,total=10,percentage=90,grade10=9,
+               status='submitted' WHERE id='report-attempt-b'""",
+            (stamp,),
+        )
+        conn.commit()
+
+
+def test_reports_module_renders_section_first_flow_and_formal_documents():
+    _reports_fixture()
+    client = _teacher_client()
+
+    landing = client.get('/teacher/reports')
+    assert landing.status_code == 200
+    landing_html = landing.get_data(as_text=True)
+    assert 'Informes docentes' in landing_html
+    assert 'Abrir sección' in landing_html
+    assert 'Sección de informes' in landing_html
+
+    section = client.get('/teacher/reports/section/990')
+    assert section.status_code == 200
+    section_html = section.get_data(as_text=True)
+    assert 'Generar informe' in section_html
+    assert (
+        'Vista restringida a los datos visibles de tu cuenta.' in section_html
+        or 'Vista completa de administración.' in section_html
+    )
+
+    with app.get_db() as conn:
+        report_subject_id = conn.execute(
+            "SELECT subject_id FROM exams WHERE id=(SELECT exam_id FROM attempts WHERE id='report-attempt-a')"
+        ).fetchone()['subject_id']
+    subject = client.get(f'/teacher/reports/section/990/subject/{report_subject_id}')
+    assert subject.status_code == 200
+    subject_html = subject.get_data(as_text=True)
+    assert 'NIE' in subject_html and 'Nombre completo' in subject_html and 'NOTA' in subject_html
+    assert 'Evaluación:' in subject_html
+    assert 'Fixture Exam report-attempt-a' in subject_html
+    assert '8.00' in subject_html
+    assert '9.00' not in subject_html
+
+    student = client.get('/teacher/reports/student/9901')
+    assert student.status_code == 200
+    student_html = student.get_data(as_text=True)
+    assert 'SUBMIT-9901' in student_html
+    assert 'Asignatura' in student_html and 'Documento' in student_html
+    assert 'Imprimir' in student_html
+
+
 def test_exam_edit_can_change_subject_before_results():
     with app.get_db() as conn:
         stamp = app.now_iso()
-        teacher_id = conn.execute('SELECT id FROM teachers ORDER BY id LIMIT 1').fetchone()['id']
-        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(910,'Editable Source','',0,%s,%s)", (stamp, stamp))
-        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(911,'Editable Target','',0,%s,%s)", (stamp, stamp))
+        teacher_id = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()['id']
+        conn.execute("INSERT INTO subjects(id,teacher_id,name,description,is_archived,created_at,updated_at) VALUES(910,%s,'Editable Source','',0,%s,%s)", (teacher_id, stamp, stamp))
+        conn.execute("INSERT INTO subjects(id,teacher_id,name,description,is_archived,created_at,updated_at) VALUES(911,%s,'Editable Target','',0,%s,%s)", (teacher_id, stamp, stamp))
         exam_id = conn.execute(
             """INSERT INTO exams(teacher_id,subject_id,title,description,is_published,is_archived,created_at,updated_at)
                VALUES(%s,910,'Editable Exam','',0,0,%s,%s) RETURNING id""",
@@ -251,6 +314,141 @@ def test_exam_edit_can_change_subject_before_results():
     assert 'name="subject_id"' in html
 
 
+def test_exam_pdf_download_includes_all_active_versions_without_answers():
+    exam_id, version_ids, question_ids = _build_printable_exam_fixture()
+    response = _teacher_client().get(f'/teacher/exams/{exam_id}/pdf')
+    assert response.status_code == 200
+    assert response.headers['Content-Type'].startswith('application/pdf')
+    from pypdf import PdfReader
+
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(response.data)).pages)
+    assert 'Printable Exam' in text
+    assert 'Printable Subject' in text
+    assert 'Institución' in text or 'Institution' in text
+    assert 'Docente' in text or 'Teacher' in text
+    assert 'Versión A' in text and 'Versión B' in text
+    assert 'Preguntas' in text or 'Questions' in text
+    assert 'Choose the correct option' in text
+    expected_choices = _shuffled_labels(
+        f"{exam_id}:{version_ids['A']}:{question_ids['choice_question_id']}",
+        ['Option A', 'Option B', 'Option C'],
+    )
+    for index, choice in enumerate(expected_choices):
+        assert f"{pdf_choice_letter(index)}. {choice}" in text
+    expected_left = _shuffled_labels(
+        f"{exam_id}:{version_ids['A']}:{question_ids['matching_question_id']}",
+        ['Capital', 'Ocean', 'River'],
+    )
+    for item in expected_left:
+        assert item in text
+
+
+def _build_printable_exam_fixture():
+    token = uuid.uuid4().hex[:8]
+    with app.get_db() as conn:
+        stamp = app.now_iso()
+        teacher_id = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()['id']
+        subject_id = conn.execute(
+            "INSERT INTO subjects(teacher_id,name,description,is_archived,created_at,updated_at) VALUES(%s,%s,'',0,%s,%s) RETURNING id",
+            (teacher_id, f'Printable Subject {token}', stamp, stamp),
+        ).fetchone()['id']
+        category_id = conn.execute(
+            "INSERT INTO categories(teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(%s,%s,%s,'',0,0,%s,%s) RETURNING id",
+            (teacher_id, subject_id, f'Printable Category {token}', stamp, stamp),
+        ).fetchone()['id']
+        conn.execute(
+            """INSERT INTO question_bank
+               (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,is_active,is_archived,created_at,updated_at)
+               VALUES(%s,%s,%s,%s,'multiple_choice','Choose the correct option',%s,%s,1,0,%s,%s)""",
+            (f'print_q_{token}', teacher_id, subject_id, category_id, '{"choices":[["a","Option A"],["b","Option B"],["c","Option C"]]}', '"b"', stamp, stamp),
+        )
+        conn.execute(
+            """INSERT INTO question_bank
+               (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,is_active,is_archived,created_at,updated_at)
+               VALUES(%s,%s,%s,%s,'matching','Match the items',%s,%s,1,0,%s,%s)""",
+            (f'print_match_{token}', teacher_id, subject_id, category_id, '{"left":[["l1","Capital"],["l2","Ocean"],["l3","River"]],"right":[["r1","France"],["r2","Pacific"],["r3","Nile"]]}', '{"l1":"r1","l2":"r2","l3":"r3"}', stamp, stamp),
+        )
+        exam_id = conn.execute(
+            """INSERT INTO exams(teacher_id,subject_id,title,description,is_published,is_archived,created_at,updated_at)
+               VALUES(%s,%s,'Printable Exam','',1,0,%s,%s) RETURNING id""",
+            (teacher_id, subject_id, stamp, stamp),
+        ).fetchone()['id']
+        version_ids = {}
+        for name in ('A', 'B'):
+            version_id = conn.execute(
+                "INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(%s,%s,1,%s,%s) RETURNING id",
+                (exam_id, name, stamp, stamp),
+            ).fetchone()['id']
+            version_ids[name] = version_id
+            conn.execute("INSERT INTO exam_version_questions(version_id,question_id,position) VALUES(%s,%s,0)", (version_id, f'print_q_{token}'))
+            conn.execute("INSERT INTO exam_version_questions(version_id,question_id,position) VALUES(%s,%s,1)", (version_id, f'print_match_{token}'))
+        conn.commit()
+    return exam_id, version_ids, {
+        'choice_question_id': f'print_q_{token}',
+        'matching_question_id': f'print_match_{token}',
+    }
+
+
+def _shuffled_labels(seed_text, labels):
+    values = list(labels)
+    random.Random(seed_text).shuffle(values)
+    return values
+
+
+def test_teacher_exam_detail_exposes_export_selector_and_formats():
+    exam_id, _, _ = _build_printable_exam_fixture()
+    html = _teacher_client().get(f'/teacher/exams/{exam_id}').get_data(as_text=True)
+    assert 'id="examExportForm"' in html
+    assert 'id="examExportFormat"' in html
+    assert f'/teacher/exams/{exam_id}/pdf' in html
+    assert f'/teacher/exams/{exam_id}/markdown' in html
+    assert f'/teacher/exams/{exam_id}/docx' in html
+
+
+def test_teacher_exam_markdown_and_docx_exports_are_available():
+    exam_id, version_ids, question_ids = _build_printable_exam_fixture()
+    client = _teacher_client()
+    md_response = client.get(f'/teacher/exams/{exam_id}/markdown')
+    assert md_response.status_code == 200
+    assert md_response.headers['Content-Type'].startswith('text/markdown')
+    md_text = md_response.get_data(as_text=True)
+    assert '# Printable Exam' in md_text
+    assert '- Institución:' in md_text
+    assert '- Asignatura:' in md_text
+    assert '- Docente:' in md_text
+    assert '## Versión A' in md_text and '## Versión B' in md_text
+    assert '### Preguntas (2)' in md_text
+    assert '### 1. Choose the correct option' in md_text
+    assert '#### Choices' in md_text
+    expected_choices = _shuffled_labels(
+        f"{exam_id}:{version_ids['A']}:{question_ids['choice_question_id']}",
+        ['Option A', 'Option B', 'Option C'],
+    )
+    assert f"A. {expected_choices[0]}" in md_text
+    assert f"B. {expected_choices[1]}" in md_text
+    assert f"C. {expected_choices[2]}" in md_text
+    expected_left = _shuffled_labels(
+        f"{exam_id}:{version_ids['A']}:{question_ids['matching_question_id']}",
+        ['Capital', 'Ocean', 'River'],
+    )
+    assert any(f"- {item}" in md_text for item in expected_left)
+
+    docx_response = client.get(f'/teacher/exams/{exam_id}/docx')
+    assert docx_response.status_code == 200
+    assert docx_response.headers['Content-Type'].startswith('application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    with zipfile.ZipFile(io.BytesIO(docx_response.data)) as zf:
+        document_xml = zf.read('word/document.xml').decode('utf-8')
+    assert 'Printable Exam' in document_xml
+    assert 'Printable Subject' in document_xml
+    assert 'Institución' in document_xml or 'Institution' in document_xml
+    assert 'Docente' in document_xml or 'Teacher' in document_xml
+    assert 'Versión A' in document_xml and 'Versión B' in document_xml
+    assert 'Choose the correct option' in document_xml
+    assert expected_choices[0] in document_xml and expected_choices[1] in document_xml and expected_choices[2] in document_xml
+    assert '<w:keepNext/>' in document_xml
+    assert '<w:cantSplit/>' in document_xml
+
+
 def test_bulk_student_csv_import_generates_email_from_nie():
     import io
     with app.get_db() as conn:
@@ -258,9 +456,9 @@ def test_bulk_student_csv_import_generates_email_from_nie():
         conn.execute("INSERT INTO sections(id,name,description,is_archived,created_at,updated_at) VALUES(301,'CSV Students','',0,%s,%s)", (stamp, stamp))
         conn.commit()
     payload = 'NIE,Nombre,Apellido,Correo\n990001,Ana,Prueba,\n990002,Carlos,Prueba,\n'.encode('utf-8')
-    client = _teacher_client()
+    client = _admin_client()
     response = client.post('/teacher/students/import', data={
-        'csrf_token':'teacher-test-token', 'section_id':'301', 'generate_email_from_nie':'on',
+        'csrf_token':'admin-test-token', 'section_id':'301', 'generate_email_from_nie':'on',
         'email_domain':'clases.edu', 'batch_password_mode':'manual', 'batch_password':'Temporal123',
         'must_change_password':'on', 'csv_file':(io.BytesIO(payload),'students.csv')
     }, content_type='multipart/form-data')
@@ -274,8 +472,9 @@ def test_question_csv_import_supports_multiple_types():
     import io
     with app.get_db() as conn:
         stamp = app.now_iso()
-        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(302,'CSV Subject','',0,%s,%s)", (stamp, stamp))
-        conn.execute("INSERT INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(302,302,'CSV Category','',0,0,%s,%s)", (stamp, stamp))
+        teacher_id = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()['id']
+        conn.execute("INSERT INTO subjects(id,teacher_id,name,description,is_archived,created_at,updated_at) VALUES(302,%s,'CSV Subject','',0,%s,%s)", (teacher_id, stamp, stamp))
+        conn.execute("INSERT INTO categories(id,teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(302,%s,302,'CSV Category','',0,0,%s,%s)", (teacher_id, stamp, stamp))
         conn.commit()
     payload = ('Tipo,Pregunta,Opciones,Respuesta,Pares,Orden,Tolerancia,SensibleMayusculas,Script,Audio\n'
                'multiple_choice,"2 + 2?","3|4|5",4,,,,,,\n'
@@ -296,9 +495,9 @@ def test_listening_without_audio_cannot_be_added_to_exam_version():
     import io
     with app.get_db() as conn:
         stamp = app.now_iso()
-        teacher_id = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()['id']
-        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(303,'CSV Audio','',0,%s,%s)", (stamp, stamp))
-        conn.execute("INSERT INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(303,303,'Listening','',0,0,%s,%s)", (stamp, stamp))
+        teacher_id = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()['id']
+        conn.execute("INSERT INTO subjects(id,teacher_id,name,description,is_archived,created_at,updated_at) VALUES(303,%s,'CSV Audio','',0,%s,%s)", (teacher_id, stamp, stamp))
+        conn.execute("INSERT INTO categories(id,teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(303,%s,303,'Listening','',0,0,%s,%s)", (teacher_id, stamp, stamp))
         conn.execute("INSERT INTO exams(subject_id,teacher_id,title,description,is_published,is_archived,created_at,updated_at) VALUES(303,%s,'Audio Test','',0,0,%s,%s)", (teacher_id, stamp, stamp))
         exam_id = conn.execute("SELECT id FROM exams WHERE subject_id=303 ORDER BY id DESC LIMIT 1").fetchone()['id']
         conn.execute("INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(%s,'A',1,%s,%s)", (exam_id, stamp, stamp))
@@ -350,9 +549,9 @@ def test_listening_question_editor_exposes_preview_controls():
 def test_order_question_editor_renders_without_dict_items_conflict():
     with app.get_db() as conn:
         stamp = app.now_iso()
-        teacher_id = conn.execute('SELECT id FROM teachers ORDER BY id LIMIT 1').fetchone()['id']
-        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(920,'Order Subject','',0,%s,%s)", (stamp, stamp))
-        conn.execute("INSERT INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(920,920,'Order Category','',0,0,%s,%s)", (stamp, stamp))
+        teacher_id = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()['id']
+        conn.execute("INSERT INTO subjects(id,teacher_id,name,description,is_archived,created_at,updated_at) VALUES(920,%s,'Order Subject','',0,%s,%s)", (teacher_id, stamp, stamp))
+        conn.execute("INSERT INTO categories(id,teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(920,%s,920,'Order Category','',0,0,%s,%s)", (teacher_id, stamp, stamp))
         conn.execute(
             """INSERT INTO question_bank
                (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,is_active,is_archived,created_at,updated_at)
@@ -376,6 +575,9 @@ def test_version_archive_and_restore_routes_exist():
     routes = {rule.rule for rule in app.app.url_map.iter_rules()}
     assert '/teacher/exams/<int:exam_id>/versions/<int:version_id>/archive' in routes
     assert '/teacher/exams/<int:exam_id>/versions/<int:version_id>/restore' in routes
+    assert '/teacher/exams/<int:exam_id>/pdf' in routes
+    assert '/teacher/exams/<int:exam_id>/markdown' in routes
+    assert '/teacher/exams/<int:exam_id>/docx' in routes
     assert '/api/listening-script/<question_id>' in routes
 
 
@@ -440,11 +642,12 @@ def test_teacher_dashboard_stats_are_scoped_to_teacher():
 
 
 def test_teacher_dashboard_renders_five_item_mobile_navigation():
-    response = _teacher_client().get('/teacher')
+    response = _admin_client().get('/teacher')
     assert response.status_code == 200
     html = response.get_data(as_text=True)
     assert 'class="app-sidebar"' in html
     assert 'class="mobile-app-bar"' in html
+    assert '/teacher/reports' in html
     assert 'data-more-open' in html
     assert 'id="teacherMoreSheet"' in html
     nav = re.search(r'<nav class="mobile-bottom-nav".*?</nav>', html, re.S)
@@ -492,7 +695,7 @@ def test_primary_teacher_navigation_renders_local_accessible_svg_icons():
     sidebar = re.search(r'<aside class="app-sidebar".*?</aside>', html, re.S)
     assert sidebar is not None
     markup = sidebar.group(0)
-    for icon_name in ('chart-bar', 'file-text', 'users-three', 'question', 'folders'):
+    for icon_name in ('chart-bar', 'file-text', 'question', 'folders'):
         assert f'/static/icons/phosphor-sprite.svg#ph-{icon_name}' in markup
     assert markup.count('aria-hidden="true"') >= 5
     assert markup.count('focusable="false"') >= 5
@@ -517,7 +720,7 @@ def test_teacher_roster_renders_semantic_tables_and_preserves_row_actions():
         )
         conn.commit()
 
-    response = _teacher_client().get('/teacher/students')
+    response = _admin_client().get('/teacher/students')
     assert response.status_code == 200
     html = response.get_data(as_text=True)
     assert html.count('data-roster-table="sections"') == 1
@@ -559,11 +762,16 @@ def test_teacher_roster_keeps_password_reset_disabled_without_email():
         )
         conn.commit()
 
-    html = _teacher_client().get('/teacher/students').get_data(as_text=True)
+    html = _admin_client().get('/teacher/students').get_data(as_text=True)
     student_row = re.search(r'<tr[^>]+data-student-row="914".*?</tr>', html, re.S)
     assert student_row is not None
     reset = re.search(r'<button[^>]+data-open-password-modal[^>]*>', student_row.group(0))
     assert reset is not None and 'disabled' in reset.group(0)
+
+
+def test_teacher_cannot_open_admin_only_roster_surface():
+    response = _teacher_client().get('/teacher/students')
+    assert response.status_code == 403
 
 
 def test_student_dashboard_route_renders_backend_statistics(monkeypatch):
@@ -653,7 +861,7 @@ def test_setup_is_admin_only():
     with client.session_transaction() as sess:
         sess.update(teacher_authenticated=True, teacher_id=880, csrf_token='teacher-only')
     assert client.get('/teacher/setup').status_code == 403
-    assert _teacher_client().get('/teacher/setup').status_code == 200
+    assert _admin_client().get('/teacher/setup').status_code == 200
 
 
 def test_setup_policy_text_change_auto_bumps_version_and_invalidates_session_acknowledgment():
@@ -720,10 +928,31 @@ def _submission_attempt(attempt_id='submit-test', student_id=990, teacher_id=Non
         {'id':'order','category_id':1,'type':'order','items':[['a','A'],['b','B']], 'answer':['a','b']},
         {'id':'match','category_id':1,'type':'matching','left':[['l1','L1'],['l2','L2']], 'right':[['r1','R1'],['r2','R2']], 'answer':{'l1':'r1','l2':'r2'}},
     ]
-    questions = [dict(question, subject_id=1, subject_name='General', category_name='General', prompt=question['id']) for question in questions]
     with app.get_db() as conn:
         if teacher_id is None:
-            teacher_id = conn.execute('SELECT id FROM teachers ORDER BY id LIMIT 1').fetchone()['id']
+            teacher_id = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()['id']
+        catalog = conn.execute(
+            """SELECT s.id AS subject_id, c.id AS category_id
+               FROM subjects s JOIN categories c ON c.subject_id=s.id AND c.teacher_id=s.teacher_id
+               WHERE s.teacher_id=%s AND s.name='General' AND c.name='General' AND s.is_archived=0 AND c.is_archived=0
+               ORDER BY s.id LIMIT 1""",
+            (teacher_id,),
+        ).fetchone()
+        if not catalog:
+            stamp = app.now_iso()
+            subject_id = conn.execute(
+                "INSERT INTO subjects(teacher_id,name,description,is_archived,created_at,updated_at) VALUES(%s,'General','',0,%s,%s) RETURNING id",
+                (teacher_id, stamp, stamp),
+            ).fetchone()['id']
+            category_id = conn.execute(
+                "INSERT INTO categories(teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(%s,%s,'General','',0,0,%s,%s) RETURNING id",
+                (teacher_id, subject_id, stamp, stamp),
+            ).fetchone()['id']
+        else:
+            subject_id = int(catalog['subject_id'])
+            category_id = int(catalog['category_id'])
+    questions = [dict(question, subject_id=subject_id, subject_name='General', category_id=category_id, category_name='General', prompt=question['id']) for question in questions]
+    with app.get_db() as conn:
         stamp = app.now_iso()
         conn.execute(
             """INSERT INTO sections(id,name,is_archived,created_at,updated_at)
@@ -740,8 +969,8 @@ def _submission_attempt(attempt_id='submit-test', student_id=990, teacher_id=Non
         )
         exam_id = conn.execute(
             """INSERT INTO exams(teacher_id,subject_id,title,description,is_published,is_archived,created_at,updated_at)
-               VALUES(%s,1,%s,'Test fixture',1,0,%s,%s) RETURNING id""",
-            (teacher_id, f'Fixture Exam {attempt_id}', stamp, stamp),
+               VALUES(%s,%s,%s,'Test fixture',1,0,%s,%s) RETURNING id""",
+            (teacher_id, subject_id, f'Fixture Exam {attempt_id}', stamp, stamp),
         ).fetchone()["id"]
         version_id = conn.execute(
             "INSERT INTO exam_versions(exam_id,name,is_active,created_at,updated_at) VALUES(%s,'A',1,%s,%s) RETURNING id",
@@ -925,14 +1154,14 @@ def test_rules_acknowledgment_lifecycle_and_attempt_language_snapshot():
     client = app.app.test_client()
     with app.get_db() as conn:
         stamp = app.now_iso()
-        teacher_id = conn.execute("SELECT id FROM teachers ORDER BY id LIMIT 1").fetchone()['id']
+        teacher_id = conn.execute("SELECT id FROM teachers WHERE role='teacher' AND is_active=1 ORDER BY id LIMIT 1").fetchone()['id']
         conn.execute("INSERT INTO sections(id,name,description,is_archived,created_at,updated_at) VALUES(591,'Rules Test','',0,%s,%s)", (stamp, stamp))
         conn.execute("""INSERT INTO students
                         (id,full_name,section_id,student_code,email,password_hash,must_change_password,is_active,is_archived,created_at,updated_at)
                         VALUES(591,'Rules Student',591,'RULES-591','rules.student@example.com',%s,0,1,0,%s,%s)""",
                      (app.generate_password_hash('Student123'), stamp, stamp))
-        conn.execute("INSERT INTO subjects(id,name,description,is_archived,created_at,updated_at) VALUES(591,'Rules Subject','',0,%s,%s)", (stamp, stamp))
-        conn.execute("INSERT INTO categories(id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(591,591,'Rules Category','',0,0,%s,%s)", (stamp, stamp))
+        conn.execute("INSERT INTO subjects(id,teacher_id,name,description,is_archived,created_at,updated_at) VALUES(591,%s,'Rules Subject','',0,%s,%s)", (teacher_id, stamp, stamp))
+        conn.execute("INSERT INTO categories(id,teacher_id,subject_id,name,description,sort_order,is_archived,created_at,updated_at) VALUES(591,%s,591,'Rules Category','',0,0,%s,%s)", (teacher_id, stamp, stamp))
         conn.execute("""INSERT INTO question_bank
                         (id,teacher_id,subject_id,category_id,type,prompt,data_json,answer_json,is_active,is_archived,created_at,updated_at)
                         VALUES('rules_q1',%s,591,591,'multiple_choice','Rules question','{"choices":[["a","A"],["b","B"]]}','"a"',1,0,%s,%s)""",

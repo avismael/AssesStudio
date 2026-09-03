@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Informes{% endblock %}
+{% block body %}
+<main class="teacher-shell report-shell">
+  <div class="teacher-shell-grid">
+    {% set active_page = "reports" %}{% include "_teacher_nav.html" %}
+    <div class="teacher-workspace">
+      <header class="teacher-header">
+        <div>
+          <p class="eyebrow">{{ icon('chart-bar') }}Módulo de informes</p>
+          <h1>Informes docentes</h1>
+          <p>Seleccione una sección para continuar con el informe por asignatura.</p>
+        </div>
+        <a class="primary-btn" href="{{ back_url }}">{{ icon('arrow-left') }}{{ back_label }}</a>
+      </header>
+
+      <section class="result-card report-card">
+        <div class="catalog-card-grid catalog-subject-grid">
+          {% for section in sections %}
+          <a class="catalog-item catalog-subject-card" href="{{ url_for('teacher_section_report', section_id=section['id']) }}">
+            <div>
+              <h3>{{ icon('folders') }}{{ section['name'] }}</h3>
+              <p class="catalog-subject-description">{{ section['description'] or 'Sin descripción' }}</p>
+            </div>
+            <div class="catalog-stats">
+              <span>{{ icon('users-three') }}{{ section['student_count'] }} estudiantes</span>
+              <span>{{ icon('folders') }}{{ section['subject_count'] }} asignaturas</span>
+              <span>{{ icon('file-text') }}{{ section['exam_count'] }} exámenes</span>
+            </div>
+            <span class="catalog-card-cta">{{ icon('arrow-right') }}Abrir sección</span>
+          </a>
+          {% else %}
+          <p>No hay secciones disponibles para informes.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+<script>localStorage.setItem('assessmentStudio.teacherSidebarCollapsed', '0');</script>
+{% endblock %}

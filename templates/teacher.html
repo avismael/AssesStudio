@@ -8,7 +8,7 @@
     <div class="teacher-workspace">
       <header class="teacher-header page-header">
         <div><p class="eyebrow">{{ t('Teacher dashboard') }}</p><h1>{{ title }}</h1><p>{{ t('Monitor outcomes, review integrity signals, and move directly into assessment work.') }}</p></div>
-        <div class="teacher-actions"><a class="primary-btn compact" href="{{ url_for('teacher_exams') }}">{{ icon('file-text') }}{{ t('Manage exams') }}</a><a class="ghost-btn compact" href="{{ url_for('teacher_questions') }}">{{ icon('question') }}{{ t('Question bank') }}</a></div>
+        <div class="teacher-actions"><a class="primary-btn compact" href="{{ url_for('teacher_exams') }}">{{ icon('file-text') }}{{ t('Manage exams') }}</a><a class="ghost-btn compact" href="{{ url_for('teacher_reports') }}">{{ icon('chart-bar') }}Informes</a><a class="ghost-btn compact" href="{{ url_for('teacher_questions') }}">{{ icon('question') }}{{ t('Question bank') }}</a></div>
       </header>
 
       <section class="kpi-grid" aria-label="{{ t('Results overview') }}">
@@ -37,7 +37,7 @@
 
         <article class="bento-card bento-resources">
           <div class="card-heading"><div><p class="eyebrow">{{ t('Workspace') }}</p><h2>{{ t('Teaching resources') }}</h2></div></div>
-          <div class="resource-grid"><a href="{{ url_for('teacher_exams') }}">{{ icon('file-text') }}<strong>{{ dashboard_stats.active_exams }}</strong><span>{{ t('Active exams') }}</span></a><a href="{{ url_for('teacher_questions') }}">{{ icon('books') }}<strong>{{ dashboard_stats.question_bank }}</strong><span>{{ t('Questions') }}</span></a><a href="{{ url_for('teacher_students') }}">{{ icon('users-three') }}<strong>{{ dashboard_stats.roster }}</strong><span>{{ t('Students') }}</span></a><a href="{{ url_for('teacher_students') }}">{{ icon('folders') }}<strong>{{ dashboard_stats.sections }}</strong><span>{{ t('Sections') }}</span></a></div>
+          <div class="resource-grid"><a href="{{ url_for('teacher_exams') }}">{{ icon('file-text') }}<strong>{{ dashboard_stats.active_exams }}</strong><span>{{ t('Active exams') }}</span></a><a href="{{ url_for('teacher_questions') }}">{{ icon('books') }}<strong>{{ dashboard_stats.question_bank }}</strong><span>{{ t('Questions') }}</span></a>{% if current_teacher_user and current_teacher_user['role'] == 'admin' %}<a href="{{ url_for('teacher_students') }}">{{ icon('users-three') }}<strong>{{ dashboard_stats.roster }}</strong><span>{{ t('Students') }}</span></a><a href="{{ url_for('teacher_students') }}">{{ icon('folders') }}<strong>{{ dashboard_stats.sections }}</strong><span>{{ t('Sections') }}</span></a>{% endif %}</div>
         </article>
 
         <article class="bento-card bento-export">

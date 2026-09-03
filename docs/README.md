@@ -19,6 +19,7 @@ Esta carpeta describe el producto realmente implementado. Las etiquetas **Implem
 | Desarrollo y QA | [Guía de desarrollo](08-development-guide.md) -> [Calidad](09-quality-strategy.md) -> [Referencia de rutas](11-api-route-reference.md) |
 | Operaciones | [Runbook](10-operations-runbook.md) -> [Diagramas](12-diagrams.md) -> [Seguridad](07-security-privacy.md) |
 | Usuarios finales | [Manuales por rol e importaciones](../userdirections/README.md) |
+| Documento maestro | [Documento de la aplicación](15-documento-de-la-aplicacion.md) -> [Manuales](../userdirections/README.md) |
 
 ## Índice maestro
 
@@ -37,6 +38,7 @@ Esta carpeta describe el producto realmente implementado. Las etiquetas **Implem
 13. [12 - Catálogo de diagramas](12-diagrams.md)
 14. [13 - Registros de decisiones arquitectónicas](13-adrs.md)
 15. [14 - Glosario, gobierno y roadmap](14-glossary-governance-roadmap.md)
+16. [15 - Documento maestro de la aplicación](15-documento-de-la-aplicacion.md)
 
 Los procedimientos de uso están en [Manuales de usuario](../userdirections/README.md), sin duplicar la referencia técnica. También son normativos [AGENTS.md](../AGENTS.md), para invariantes de modificación, y [README.md](../README.md), como entrada operativa breve. Los changelogs históricos se enlazan desde el [índice de cambios](14-glossary-governance-roadmap.md#índice-de-cambios).
 
@@ -55,6 +57,7 @@ Los procedimientos de uso están en [Manuales de usuario](../userdirections/READ
 | Seguridad y privacidad | [07](07-security-privacy.md) | [10](10-operations-runbook.md) |
 | Operaciones | [10](10-operations-runbook.md) | [07](07-security-privacy.md) |
 | Rutas, configuración y referencia | [11](11-api-route-reference.md), [14](14-glossary-governance-roadmap.md) | [08](08-development-guide.md) |
+| Documento maestro de la aplicación | [15](15-documento-de-la-aplicacion.md) | [05](05-architecture.md), [06](06-data-model.md), [11](11-api-route-reference.md), [12](12-diagrams.md), [../userdirections/README.md](../userdirections/README.md) |
 
 ## Convención de estado
 

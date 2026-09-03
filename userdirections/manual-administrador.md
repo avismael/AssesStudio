@@ -4,15 +4,15 @@
 
 ## Responsabilidad del rol
 
-El administrador prepara la institución, gestiona cuentas docentes y mantiene el catálogo compartido. También puede trabajar como docente, pero únicamente puede abrir y editar directamente su propio banco de preguntas, exámenes y resultados. El rol `admin` **no** ofrece una vista global del contenido privado de otros docentes. No obstante, modificar o archivar el catálogo institucional sí puede producir efectos indirectos sobre preguntas de todos los propietarios, como se explica más adelante.
+El administrador prepara la institución, gestiona cuentas docentes, administra el padrón (secciones y estudiantes) y ve los informes globales. También puede trabajar como docente, pero únicamente puede abrir y editar directamente su propio banco de preguntas, exámenes y resultados. El rol `admin` **no** ofrece una vista global del contenido privado de otros docentes.
 
 | Acción | Solo administrador | Administrador y docente |
 |---|---:|---:|
 | Crear, editar, activar o desactivar cuentas docentes | Sí | No |
 | Configurar institución, idioma, reglas y límite de audio | Sí | No |
-| Crear, editar o archivar asignaturas y categorías | Sí | No |
-| Consultar el catálogo | No | Sí |
-| Gestionar estudiantes y secciones institucionales | No | Sí |
+| Crear, editar o archivar asignaturas y categorías propias | Sí, en su propio espacio docente | Sí, en su propio espacio docente |
+| Consultar el catálogo propio | No | Sí |
+| Gestionar estudiantes y secciones institucionales | Sí | No |
 | Crear preguntas, exámenes y versiones | No | Sí, cada uno en su espacio |
 | Ver resultados o aplicar penalizaciones | No | Sí, solo si es propietario del intento |
 
@@ -39,15 +39,15 @@ En **Docentes** puede crear cuentas `teacher` o `admin`, editar nombre, correo y
 
 La interfaz impide desactivar la propia cuenta y protege al último administrador activo. Antes de reducir privilegios o desactivar otro administrador, confirme que seguirá existiendo al menos uno activo.
 
-## Catálogo institucional compartido
+## Catálogo por docente
 
-En **Asignaturas y categorías** todos los docentes pueden consultar el catálogo, pero solo un administrador puede modificarlo. Los conteos de preguntas que ve cada docente corresponden a su propio espacio.
+En **Asignaturas y categorías** cada docente administra su propio catálogo. El sistema permite repetir nombres entre docentes porque la pertenencia está aislada por `teacher_id`. Los conteos de preguntas que ve cada docente corresponden a su propio espacio.
 
 - Una categoría pertenece a una asignatura.
 - Los nombres se usan en las importaciones CSV y deben coincidir exactamente.
-- Archivar una asignatura también archiva sus categorías y las preguntas asociadas de **todos los docentes**, no solo las del administrador actual.
-- Archivar una categoría archiva las preguntas asociadas de **todos los docentes**.
-- Cambiar una categoría de asignatura reasigna también las preguntas vinculadas, independientemente del docente propietario.
+- Archivar una asignatura solo afecta al espacio del docente propietario.
+- Archivar una categoría solo afecta al espacio del docente propietario.
+- Cambiar una categoría de asignatura reasigna las preguntas vinculadas dentro del mismo docente.
 - Los intentos históricos conservan sus snapshots y siguen siendo consultables.
 
 Antes de archivar o reasignar catálogo, revise el impacto con todos los docentes propietarios. Estas operaciones no permiten leer sus bancos o resultados, pero sí modifican la clasificación o disponibilidad de sus preguntas. Coordine también los cambios de nombre: el catálogo es compartido y afecta las opciones e importaciones de todo el equipo.
@@ -68,7 +68,7 @@ Si cambia el texto de las reglas, la aplicación incrementa automáticamente su 
 
 ## Padrón institucional
 
-Estudiantes y secciones son compartidos. Cualquier docente o administrador puede crearlos, editarlos, importar estudiantes, restablecer contraseñas y activar, desactivar o archivar registros. Por ello:
+Estudiantes y secciones son institucionales y los administra el rol `admin`. Por ello:
 
 - acuerde una convención institucional para NIE, secciones y correos;
 - evite duplicar estudiantes que ya existen para otra asignatura;

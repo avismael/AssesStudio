@@ -3,8 +3,8 @@
 | Campo | Valor |
 |---|---|
 | Estado | Verificado desde `app.app.url_map` y decorators |
-| Versión | 1.1 |
-| Fecha | 2026-08-16 |
+| Versión | 1.2 |
+| Fecha | 2026-09-02 |
 
 No es una API pública. `Auth` indica sesión requerida; `Owner` indica validación de ownership/parent. `CSRF` aplica a mutaciones de formulario. GET/POST combinados solo mutan en POST. Salvo las excepciones indicadas, las rutas Teacher usan `teacher_required`; las rutas Admin usan `admin_required`, que incluye `teacher_required` y revalida cuenta activa.
 
@@ -48,21 +48,21 @@ No es una API pública. `Auth` indica sesión requerida; `Owner` indica validaci
 
 **Gaps de seguridad conocidos:** el POST de login docente no verifica CSRF, a diferencia del login student; `/api/integrity-event` muta JSON sin token; y logout docente solo exige token cuando la marca de sesión teacher ya existe. Deben endurecerse sin confundir estas brechas con bypass de contraseña o cross-tenant ownership.
 
-## Padrón compartido
+## Padrón institucional (admin)
 
 | Método | Ruta | Auth | Scope | CSRF | Propósito |
 |---|---|---|---|---|---|
-| GET | `/teacher/students` | Teacher | Institucional | - | Lista/filtros de padrón |
-| GET | `/teacher/students/import/template` | Teacher | Institucional | - | Plantilla CSV localizada |
-| POST | `/teacher/students/import` | Teacher | Institucional | Sí | Importar filas válidas |
-| POST | `/teacher/sections/new` | Teacher | Institucional | Sí | Crear section |
-| POST | `/teacher/sections/<int:section_id>/edit` | Teacher | Institucional | Sí | Editar section |
-| POST | `/teacher/sections/<int:section_id>/archive` | Teacher | Institucional | Sí | Archivar section vacía |
-| POST | `/teacher/students/new` | Teacher | Institucional | Sí | Crear cuenta student |
-| POST | `/teacher/students/<int:student_id>/edit` | Teacher | Institucional | Sí | Editar cuenta |
-| POST | `/teacher/students/<int:student_id>/password` | Teacher | Institucional | Sí | Restablecer clave |
-| POST | `/teacher/students/<int:student_id>/toggle` | Teacher | Institucional | Sí | Activar/desactivar |
-| POST | `/teacher/students/<int:student_id>/archive` | Teacher | Institucional | Sí | Archivo lógico |
+| GET | `/teacher/students` | Admin | Institucional | - | Lista/filtros de padrón |
+| GET | `/teacher/students/import/template` | Admin | Institucional | - | Plantilla CSV localizada |
+| POST | `/teacher/students/import` | Admin | Institucional | Sí | Importar filas válidas |
+| POST | `/teacher/sections/new` | Admin | Institucional | Sí | Crear section |
+| POST | `/teacher/sections/<int:section_id>/edit` | Admin | Institucional | Sí | Editar section |
+| POST | `/teacher/sections/<int:section_id>/archive` | Admin | Institucional | Sí | Archivar section vacía |
+| POST | `/teacher/students/new` | Admin | Institucional | Sí | Crear cuenta student |
+| POST | `/teacher/students/<int:student_id>/edit` | Admin | Institucional | Sí | Editar cuenta |
+| POST | `/teacher/students/<int:student_id>/password` | Admin | Institucional | Sí | Restablecer clave |
+| POST | `/teacher/students/<int:student_id>/toggle` | Admin | Institucional | Sí | Activar/desactivar |
+| POST | `/teacher/students/<int:student_id>/archive` | Admin | Institucional | Sí | Archivo lógico |
 
 ## Banco de preguntas
 
@@ -78,17 +78,17 @@ No es una API pública. `Auth` indica sesión requerida; `Owner` indica validaci
 | POST | `/teacher/questions/<qid>/archive` | Teacher | Question owner | Sí | Archivo lógico |
 | POST | `/teacher/questions/bulk` | Teacher | UPDATE constrained by owner | Sí | Activate/deactivate/archive |
 
-## Catálogo institucional
+## Catálogo por docente
 
 | Método | Ruta | Auth/rol | Scope | CSRF | Propósito |
 |---|---|---|---|---|---|
-| GET | `/teacher/catalog` | Teacher | Lectura institucional, counts own | - | Subjects/categories |
-| POST | `/teacher/subjects/new` | Admin | Institucional | Sí | Crear subject |
-| POST | `/teacher/subjects/<int:subject_id>/edit` | Admin | Institucional | Sí | Editar subject |
-| POST | `/teacher/subjects/<int:subject_id>/archive` | Admin | Institucional | Sí | Archivar subject/categories/questions |
-| POST | `/teacher/categories/new` | Admin | Institucional | Sí | Crear category |
-| POST | `/teacher/categories/<int:category_id>/edit` | Admin | Institucional | Sí | Editar/mover category |
-| POST | `/teacher/categories/<int:category_id>/archive` | Admin | Institucional | Sí | Archivar category/questions |
+| GET | `/teacher/catalog` | Teacher | Lectura own catalog | - | Subjects/categories |
+| POST | `/teacher/subjects/new` | Teacher | Own catalog | Sí | Crear subject |
+| POST | `/teacher/subjects/<int:subject_id>/edit` | Teacher | Own catalog | Sí | Editar subject |
+| POST | `/teacher/subjects/<int:subject_id>/archive` | Teacher | Own catalog | Sí | Archivar subject/categories/questions |
+| POST | `/teacher/categories/new` | Teacher | Own catalog | Sí | Crear category |
+| POST | `/teacher/categories/<int:category_id>/edit` | Teacher | Own catalog | Sí | Editar/mover category |
+| POST | `/teacher/categories/<int:category_id>/archive` | Teacher | Own catalog | Sí | Archivar category/questions |
 
 ## Exámenes, versiones y asignaciones
 
@@ -99,6 +99,7 @@ Todas usan `teacher_required`; `exam_row()` exige `exams.teacher_id=current_teac
 | GET | `/teacher/exams` | Lista current teacher | - | Exam manager |
 | POST | `/teacher/exams/new` | Inserta current teacher | Sí | Crear exam + version A |
 | GET | `/teacher/exams/<int:exam_id>` | Exam owner | - | Detalle |
+| GET | `/teacher/exams/<int:exam_id>/pdf` | Exam owner | - | PDF formal con todas las versiones activas |
 | POST | `/teacher/exams/<int:exam_id>/edit` | Exam owner | Sí | Editar |
 | POST | `/teacher/exams/<int:exam_id>/publish` | Exam owner | Sí | Publicar/ocultar |
 | POST | `/teacher/exams/<int:exam_id>/archive` | Exam owner | Sí | Archivar y desactivar assignments |

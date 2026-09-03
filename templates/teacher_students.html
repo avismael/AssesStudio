@@ -1,221 +1,399 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
-{% block title %}{{ t('Students') }}{% endblock %}
+{% block title %}{{ t('Estudiantes') }}{% endblock %}
 {% block body %}
 <main class="teacher-shell">
   <div class="teacher-shell-grid">
-  {% set active_page = "students" %}{% include "_teacher_nav.html" %}
-  <div class="teacher-workspace">
-  <header class="teacher-header">
-    <div><p class="eyebrow">{{ t('Student roster eyebrow') }}</p><h1>{{ t('Students & sections') }}</h1><p>{{ t('Add students manually, organize them by section, and optionally require roster validation before an assessment begins.') }} {{ t('Email and password are required for every student account.') }}</p></div>
-    <div class="teacher-actions roster-header-actions">
-      <button class="primary-btn" type="button" data-open-modal="studentCreateModal" {% if not sections %}disabled title="{{ t('Create a section first before adding students.') }}"{% endif %}>{{ icon('plus') }}{{ t('Add student') }}</button>
-      <button class="ghost-btn" type="button" data-open-modal="sectionCreateModal">{{ icon('plus') }}{{ t('Create section') }}</button>
-      <button class="ghost-btn" type="button" data-open-modal="studentImportModal" {% if not sections %}disabled{% endif %}>{{ icon('upload-simple') }}{{ t('Import students') }}</button>
-      <a class="ghost-btn" href="{{ url_for('teacher_setup') }}">{{ icon('gear-six') }}{{ t('Access settings') }}</a>
-    </div>
-  </header>
+    {% set active_page = "students" %}{% include "_teacher_nav.html" %}
+    <div class="teacher-workspace">
+      <header class="teacher-header roster-header">
+        <div>
+          <p class="eyebrow">{{ t('Padrón de estudiantes') }}</p>
+          <h1>{{ t('Estudiantes y secciones') }}</h1>
+          <p>{{ t('Primero creá una sección y después gestioná los estudiantes dentro de ella.') }} {% if selected_section %}{{ t('Ahora estás dentro de la vista de una sección.') }}{% endif %}</p>
+        </div>
+        <div class="teacher-actions roster-header-actions">
+          <button class="primary-btn" type="button" data-open-modal="sectionCreateModal">{{ icon('plus') }}{{ t('Crear sección') }}</button>
+        </div>
+      </header>
 
-  {% if credentials %}
-  <section class="credential-notice" data-credential-box data-copy-text="{{ t('Student') }}: {{ credentials.name }}&#10;{{ t('Email') }}: {{ credentials.email }}&#10;{{ t('Password') }}: {{ credentials.password }}">
-    <div class="credential-notice-head"><div><p class="eyebrow">{{ t('Password shown only once') }}</p><h2>{{ t('Temporary credentials') }}</h2><p>{{ t('Save or deliver these credentials now. The stored password cannot be viewed later.') }}</p></div><button class="notice-close icon-only" type="button" data-dismiss-notice aria-label="{{ t('Close') }}">{{ icon('x') }}</button></div>
-    <div class="credential-grid"><div><span>{{ t('Student') }}</span><strong>{{ credentials.name }}</strong></div><div><span>{{ t('Email') }}</span><strong>{{ credentials.email }}</strong></div><div><span>{{ t('Password') }}</span><code>{{ credentials.password }}</code></div></div>
-    <button class="primary-btn compact" type="button" data-copy-credentials>{{ icon('copy') }}{{ t('Copy credentials') }}</button>
-  </section>
-  {% endif %}
-
-  {% if bulk_credentials %}
-  <section class="credential-notice" data-credential-box data-copy-text="{{ t('Temporary batch password') }}: {{ bulk_credentials.password }}">
-    <div class="credential-notice-head"><div><p class="eyebrow">{{ t('Bulk import complete') }}</p><h2>{{ t('Temporary batch password') }}</h2><p>{{ bulk_credentials.count }} {{ t('Imported')|lower }} · {{ t('Section') }} {{ bulk_credentials.section }}. {{ t('This password is shown only once. Students should change it at first sign-in.') }}</p></div><button class="notice-close icon-only" type="button" data-dismiss-notice aria-label="{{ t('Close') }}">{{ icon('x') }}</button></div>
-    <div class="credential-grid"><div><span>{{ t('Imported') }}</span><strong>{{ bulk_credentials.count }}</strong></div><div><span>{{ t('Section') }}</span><strong>{{ bulk_credentials.section }}</strong></div><div><span>{{ t('Password') }}</span><code>{{ bulk_credentials.password }}</code></div></div>
-    <button class="primary-btn compact" type="button" data-copy-credentials>{{ icon('copy') }}{{ t('Copy credentials') }}</button>
-  </section>
-  {% endif %}
-  {% if import_summary %}
-  <section class="import-summary-card"><strong>{{ t('Bulk import complete') }}</strong><span>{{ t('Imported') }}: {{ import_summary.imported }} · {{ t('Skipped') }}: {{ import_summary.skipped }}</span>{% if import_summary.errors %}<ul>{% for error in import_summary.errors %}<li>{{ error }}</li>{% endfor %}</ul>{% endif %}</section>
-  {% endif %}
-
-  <section class="teacher-stat-grid roster-stats">
-    <article><span>{{ t('Active students') }}</span><strong>{{ active_students }}</strong><small>{{ t('available in the roster') }}</small></article>
-    <article><span>{{ t('Sections') }}</span><strong>{{ sections|length }}</strong><small>{{ t('active groups') }}</small></article>
-    <article><span>{{ t('Inactive students') }}</span><strong>{{ inactive_students }}</strong><small>{{ t('kept for historical records') }}</small></article>
-  </section>
-
-  <section class="account-info-strip"><span>{{ icon('identification-card') }}</span><div><strong>{{ t('Account access') }}</strong><p>{{ t('Students sign in with their registered email and password.') }} {{ t('Legacy roster students without credentials are marked Account pending until a teacher sets an email and password.') }}</p></div></section>
-
-
-  {% if sections %}
-  <section class="section-manager roster-data-section" aria-labelledby="sectionsTableTitle">
-    <div class="section-title-row"><div><p class="eyebrow">{{ t('Groups') }}</p><h2 id="sectionsTableTitle">{{ t('Sections') }}</h2></div></div>
-    <div class="roster-table-frame">
-      <table class="roster-table sections-table" data-roster-table="sections" aria-labelledby="sectionsTableTitle">
-        <thead>
-          <tr>
-            <th scope="col">{{ t('Section') }}</th>
-            <th scope="col">{{ t('Description') }}</th>
-            <th scope="col" class="numeric-heading">{{ t('Active') }}</th>
-            <th scope="col" class="numeric-heading">{{ t('Total') }}</th>
-            <th scope="col" class="actions-heading">{{ t('Actions') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-      {% for sec in sections %}
-          <tr data-section-row="{{ sec['id'] }}">
-            <th scope="row" data-label="{{ t('Section') }}"><strong class="roster-primary-text">{{ sec['name'] }}</strong></th>
-            <td data-label="{{ t('Description') }}"><span class="roster-secondary-text">{{ sec['description'] or '—' }}</span></td>
-            <td data-label="{{ t('Active') }}" class="numeric-cell"><strong>{{ sec['active_count'] or 0 }}</strong></td>
-            <td data-label="{{ t('Total') }}" class="numeric-cell"><strong>{{ sec['student_count'] or 0 }}</strong></td>
-            <td data-label="{{ t('Actions') }}" class="roster-actions-cell">
-              <div class="roster-row-actions">
-                <button class="ghost-btn compact" type="button" data-open-section-modal data-id="{{ sec['id'] }}" data-url="{{ url_for('teacher_section_edit', section_id=sec['id']) }}" data-name="{{ sec['name']|e }}" data-description="{{ (sec['description'] or '')|e }}">{{ icon('pencil-simple') }}{{ t('Edit') }}</button>
-                <form method="post" action="{{ url_for('teacher_section_archive', section_id=sec['id']) }}" data-confirm data-confirm-title="{{ t('Archive section') }}" data-confirm-text="{{ t('This action requires confirmation.') }} {{ t('Archived items remain in historical results but are hidden from normal management views.') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="danger-btn compact" type="submit">{{ icon('archive') }}{{ t('Archive') }}</button></form>
-              </div>
-            </td>
-          </tr>
-      {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-  {% endif %}
-
-  <section class="roster-list-section roster-data-section" aria-labelledby="studentsTableTitle">
-    <div class="section-title-row"><div><p class="eyebrow">{{ t('Directory') }}</p><h2 id="studentsTableTitle">{{ t('Student roster') }}</h2></div><span class="result-count">{{ students|length }} {{ t('shown') }}</span></div>
-    <form class="filter-card roster-filter" method="get"><label class="filter-search"><span>{{ t('Search') }}</span><input type="search" name="q" value="{{ filters.q }}" placeholder="{{ t('Student email or code...') }}"></label><label><span>{{ t('Section') }}</span><select name="section"><option value="">{{ t('All sections') }}</option>{% for sec in sections %}<option value="{{ sec['id'] }}" {{ 'selected' if filters.section == sec['id']|string else '' }}>{{ sec['name'] }}</option>{% endfor %}</select></label><label><span>{{ t('Status') }}</span><select name="status"><option value="active" {{ 'selected' if filters.status == 'active' else '' }}>{{ t('Active') }}</option><option value="inactive" {{ 'selected' if filters.status == 'inactive' else '' }}>{{ t('Inactive') }}</option><option value="all" {{ 'selected' if filters.status == 'all' else '' }}>{{ t('All') }}</option></select></label><button class="ghost-btn" type="submit">{{ icon('funnel') }}{{ t('Apply filters') }}</button></form>
-
-    {% if students %}
-    <div class="roster-table-frame">
-      <table class="roster-table students-table" data-roster-table="students" aria-labelledby="studentsTableTitle">
-        <thead>
-          <tr>
-            <th scope="col">{{ t('Student') }}</th>
-            <th scope="col">{{ t('Section') }}</th>
-            <th scope="col">{{ t('Student code') }}</th>
-            <th scope="col">{{ t('Account access') }}</th>
-            <th scope="col">{{ t('Status') }}</th>
-            <th scope="col">{{ t('Notes') }}</th>
-            <th scope="col" class="actions-heading">{{ t('Actions') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for st in students %}
-          <tr class="{{ 'is-inactive' if not st['is_active'] else '' }}" data-student-row="{{ st['id'] }}">
-            <th scope="row" data-label="{{ t('Student') }}">
-              <span class="roster-identity"><span class="roster-avatar" aria-hidden="true">{{ st['full_name'][0]|upper }}</span><span><strong class="roster-primary-text">{{ st['full_name'] }}</strong><small>{{ st['email'] or t('Account pending') }}</small></span></span>
-            </th>
-            <td data-label="{{ t('Section') }}"><strong class="roster-cell-value">{{ st['section_name'] }}</strong></td>
-            <td data-label="{{ t('Student code') }}"><span class="roster-code">{{ st['student_code'] or '—' }}</span></td>
-            <td data-label="{{ t('Account access') }}">
-              <span class="account-state {{ 'ready' if st['email'] and st['password_hash'] else 'pending' }}"><span>{{ t('Account ready') if st['email'] and st['password_hash'] else t('Account pending') }}</span>{% if st['must_change_password'] and st['password_hash'] %}<small>{{ t('Require password change at next sign-in') }}</small>{% endif %}</span>
-            </td>
-            <td data-label="{{ t('Status') }}"><span class="status-dot {{ 'live' if st['is_active'] else 'bank' }}">{{ t('Active') if st['is_active'] else t('Inactive') }}</span></td>
-            <td data-label="{{ t('Notes') }}" class="roster-notes"><span>{{ st['notes'] or '—' }}</span></td>
-            <td data-label="{{ t('Actions') }}" class="roster-actions-cell">
-              <div class="roster-row-actions">
-                <button class="ghost-btn compact" type="button" data-open-student-modal data-id="{{ st['id'] }}" data-url="{{ url_for('teacher_student_edit', student_id=st['id']) }}" data-name="{{ st['full_name']|e }}" data-email="{{ (st['email'] or '')|e }}" data-section-id="{{ st['section_id'] }}" data-code="{{ (st['student_code'] or '')|e }}" data-notes="{{ (st['notes'] or '')|e }}" data-active="{{ 1 if st['is_active'] else 0 }}">{{ icon('pencil-simple') }}{{ t('Edit student') }}</button>
-                <button class="ghost-btn compact" type="button" data-open-password-modal data-id="{{ st['id'] }}" data-url="{{ url_for('teacher_student_password', student_id=st['id']) }}" data-name="{{ st['full_name']|e }}" data-email="{{ (st['email'] or '')|e }}" {% if not st['email'] %}disabled{% endif %}>{{ icon('key') }}{{ t('Reset password') }}</button>
-                <form method="post" action="{{ url_for('teacher_student_archive', student_id=st['id']) }}" data-confirm data-confirm-title="{{ t('Archive student') }}" data-confirm-text="{{ t('This action requires confirmation.') }} {{ t('Archived items remain in historical results but are hidden from normal management views.') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="danger-btn compact" type="submit">{{ icon('archive') }}{{ t('Archive') }}</button></form>
-              </div>
-            </td>
-          </tr>
+      {% if not selected_section %}
+      <section class="section-roster-stack" aria-label="{{ t('Secciones') }}">
+        {% for sec in sections %}
+        <article class="section-roster-card is-overview">
+          <div class="section-roster-summary">
+            <div class="section-roster-copy">
+              <p class="eyebrow">{{ icon('folders') }}{{ t('Sección') }}</p>
+              <h2>{{ sec['name'] }}</h2>
+              <p>{{ sec['description'] or t('Todavía no hay descripción.') }}</p>
+            </div>
+            <div class="section-roster-meta">
+              <div><strong>{{ sec['student_count'] or 0 }}</strong><span>{{ icon('users-three') }}{{ t('estudiantes') }}</span></div>
+              <div><strong>{{ sec['active_count'] or 0 }}</strong><span>{{ icon('check-circle') }}{{ t('activos') }}</span></div>
+            </div>
+            <a class="ghost-btn compact section-open-link" href="{{ url_for('teacher_students_section', section_id=sec['id']) }}">{{ icon('arrow-right') }}{{ t('Abrir sección') }}</a>
+          </div>
+        </article>
         {% endfor %}
-        </tbody>
-      </table>
+      </section>
+
+      <div class="roster-table-frame">
+        <table class="roster-table section-student-table" data-roster-table="sections" aria-label="{{ t('Secciones') }}">
+          <thead>
+            <tr>
+              <th scope="col">{{ t('Section') }}</th>
+              <th scope="col">{{ t('Students') }}</th>
+              <th scope="col">{{ t('Active students') }}</th>
+              <th scope="col" class="actions-heading">{{ t('Actions') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for sec in sections %}
+            <tr data-section-row="{{ sec['id'] }}">
+              <th scope="row" data-label="{{ t('Section') }}">{{ sec['name'] }}</th>
+              <td data-label="{{ t('Students') }}">{{ sec['student_count'] or 0 }}</td>
+              <td data-label="{{ t('Active students') }}">{{ sec['active_count'] or 0 }}</td>
+              <td data-label="{{ t('Actions') }}" class="roster-actions-cell">
+                <div class="roster-row-actions">
+                  <button class="ghost-btn compact" type="button" data-open-section-modal data-id="{{ sec['id'] }}" data-url="{{ url_for('teacher_section_edit', section_id=sec['id']) }}" data-name="{{ sec['name']|e }}" data-description="{{ (sec['description'] or '')|e }}">{{ icon('pencil-simple') }}{{ t('Edit') }}</button>
+                  <form method="post" action="{{ url_for('teacher_section_archive', section_id=sec['id']) }}" data-confirm data-confirm-title="{{ t('Archive section') }}" data-confirm-text="{{ t('This action requires confirmation.') }} {{ t('Archived items remain in historical results but are hidden from regular management views.') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="return_q" value="{{ filters.q }}">
+                    <input type="hidden" name="return_section" value="{{ filters.section }}">
+                    <button class="danger-btn compact" type="submit">{{ icon('archive') }}{{ t('Archive') }}</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if students %}
+      <section class="section-roster-detail" aria-label="{{ t('Students') }}">
+        <header class="section-detail-header">
+          <div>
+            <p class="eyebrow">{{ icon('users-three') }}{{ t('Students') }}</p>
+            <p class="section-detail-kicker">{{ t('Roster and sections') }}</p>
+            <h2>{{ t('Students') }}</h2>
+            <p>{{ t('Use the section filter only to narrow by NIE, name, or section.') }}</p>
+          </div>
+        </header>
+        <div class="roster-table-frame">
+          <table class="roster-table section-student-table" data-roster-table="students" aria-label="{{ t('Students') }}">
+            <thead>
+              <tr>
+                <th scope="col">{{ t('Student') }}</th>
+                <th scope="col">{{ t('Section') }}</th>
+                <th scope="col">{{ t('Access') }}</th>
+                <th scope="col">{{ t('Status') }}</th>
+                <th scope="col">{{ t('Notes') }}</th>
+                <th scope="col" class="actions-heading">{{ t('Actions') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for st in students %}
+              <tr class="{{ 'is-inactive' if not st['is_active'] else '' }}" data-student-row="{{ st['id'] }}">
+                <th scope="row" data-label="{{ t('Student') }}">
+                  <span class="roster-identity"><span class="roster-avatar" aria-hidden="true">{{ st['full_name'][0]|upper }}</span><span class="roster-identity-copy"><strong class="roster-primary-text">{{ st['full_name'] }}</strong><span class="roster-meta-line"><small class="roster-code roster-code-inline">{{ st['student_code'] or '—' }}</small><small class="roster-email">{{ st['email'] or t('Access pending') }}</small></span></span></span>
+                </th>
+                <td data-label="{{ t('Section') }}">{{ st['section_name'] }}</td>
+                <td data-label="{{ t('Access') }}"><span class="account-state {{ 'ready' if st['email'] and st['password_hash'] else 'pending' }}"><span>{{ t('Access ready') if st['email'] and st['password_hash'] else t('Access pending') }}</span>{% if st['must_change_password'] and st['password_hash'] %}<small>{{ t('Require password change on next login') }}</small>{% endif %}</span></td>
+                <td data-label="{{ t('Status') }}"><span class="status-dot {{ 'live' if st['is_active'] else 'bank' }}">{{ t('Active') if st['is_active'] else t('Inactive') }}</span></td>
+                <td data-label="{{ t('Notes') }}" class="roster-notes"><span>{{ st['notes'] or '—' }}</span><a class="report-link compact" href="{{ url_for('teacher_student_report', student_id=st['id']) }}">{{ icon('file-text') }}{{ t('Report') }}</a></td>
+                <td data-label="{{ t('Actions') }}" class="roster-actions-cell">
+                  <div class="roster-row-actions">
+                    <button class="ghost-btn compact" type="button" data-open-student-modal data-id="{{ st['id'] }}" data-url="{{ url_for('teacher_student_edit', student_id=st['id']) }}" data-name="{{ st['full_name']|e }}" data-email="{{ (st['email'] or '')|e }}" data-section-id="{{ st['section_id'] }}" data-code="{{ (st['student_code'] or '')|e }}" data-notes="{{ (st['notes'] or '')|e }}" data-active="{{ 1 if st['is_active'] else 0 }}">{{ icon('pencil-simple') }}{{ t('Edit') }}</button>
+                    <button class="ghost-btn compact" type="button" data-open-password-modal data-id="{{ st['id'] }}" data-url="{{ url_for('teacher_student_password', student_id=st['id']) }}" data-name="{{ st['full_name']|e }}" data-email="{{ (st['email'] or '')|e }}" {% if not st['email'] %}disabled{% endif %}>{{ icon('key') }}{{ t('Reset password') }}</button>
+                    <form method="post" action="{{ url_for('teacher_student_archive', student_id=st['id']) }}" data-confirm data-confirm-title="{{ t('Archive student') }}" data-confirm-text="{{ t('This action requires confirmation.') }} {{ t('Archived items remain in historical results but are hidden from regular management views.') }}">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="return_q" value="{{ filters.q }}">
+                      <input type="hidden" name="return_section" value="{{ filters.section }}">
+                      <button class="danger-btn compact" type="submit">{{ icon('archive') }}{{ t('Archive') }}</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% endif %}
+      {% endif %}
+
+      {% if selected_section %}
+      {% set sec = selected_section %}
+      {% set section_students = students_by_section.get(sec['id'], []) %}
+      <section class="section-roster-detail" aria-label="{{ sec['name'] }}">
+        <header class="section-detail-header">
+          <div>
+            <p class="eyebrow">{{ icon('users-three') }}{{ t('Espacio de la sección') }}</p>
+            <p class="section-detail-kicker">{{ t('Vista enfocada del padrón') }}</p>
+            <h2>{{ sec['name'] }}</h2>
+            <p>{{ sec['description'] or t('Todavía no hay descripción.') }}</p>
+          </div>
+          <div class="section-detail-stats">
+            <div><strong>{{ sec['student_count'] or 0 }}</strong><span>{{ icon('users-three') }}{{ t('estudiantes') }}</span></div>
+            <div><strong>{{ sec['active_count'] or 0 }}</strong><span>{{ icon('check-circle') }}{{ t('activos') }}</span></div>
+          </div>
+          <a class="ghost-btn compact" href="{{ url_for('teacher_students') }}">{{ icon('arrow-left') }}{{ t('Todas las secciones') }}</a>
+        </header>
+
+        <div class="section-roster-lede">
+          <strong>{{ icon('users-three-duotone') }}{{ t('Espacio de trabajo del padrón') }}</strong>
+          <p>{{ t('Desde aquí podés editar accesos, restablecer contraseñas, mover estudiantes y ejecutar acciones masivas.') }}</p>
+        </div>
+
+        {% if credentials and credentials.section_id == sec['id'] %}
+        <section class="credential-notice section-credential-notice" data-credential-box data-copy-text="{{ t('Estudiante') }}: {{ credentials.name }}&#10;{{ t('Correo') }}: {{ credentials.email }}&#10;{{ t('Contraseña') }}: {{ credentials.password }}">
+          <div class="credential-notice-head">
+            <div>
+              <p class="eyebrow">{{ t('La contraseña se muestra una sola vez') }}</p>
+              <h2>{{ t('Credenciales temporales') }}</h2>
+              <p>{{ t('Guardá o entregá estas credenciales ahora. La contraseña almacenada no se podrá ver después.') }}</p>
+            </div>
+            <button class="notice-close icon-only" type="button" data-dismiss-notice aria-label="{{ t('Cerrar') }}">{{ icon('x') }}</button>
+          </div>
+          <div class="credential-grid">
+            <div><span>{{ t('Estudiante') }}</span><strong>{{ credentials.name }}</strong></div>
+            <div><span>{{ t('Correo') }}</span><strong>{{ credentials.email }}</strong></div>
+            <div><span>{{ t('Contraseña') }}</span><code>{{ credentials.password }}</code></div>
+          </div>
+          <button class="primary-btn compact" type="button" data-copy-credentials>{{ icon('copy') }}{{ t('Copiar credenciales') }}</button>
+        </section>
+        {% endif %}
+
+        {% if bulk_credentials and bulk_credentials.section_id == sec['id'] %}
+        <section class="credential-notice section-credential-notice" data-credential-box data-copy-text="{{ t('Contraseña temporal del lote') }}: {{ bulk_credentials.password }}">
+          <div class="credential-notice-head">
+            <div>
+              <p class="eyebrow">{{ t('Importación masiva completada') }}</p>
+              <h2>{{ t('Contraseña temporal del lote') }}</h2>
+              <p>{{ bulk_credentials.count }} {{ t('importados') }} · {{ t('Sección') }} {{ bulk_credentials.section }}. {{ t('Esta contraseña se muestra una sola vez. Los estudiantes deberían cambiarla en el primer ingreso.') }}</p>
+            </div>
+            <button class="notice-close icon-only" type="button" data-dismiss-notice aria-label="{{ t('Cerrar') }}">{{ icon('x') }}</button>
+          </div>
+          <div class="credential-grid">
+            <div><span>{{ t('Importados') }}</span><strong>{{ bulk_credentials.count }}</strong></div>
+            <div><span>{{ t('Sección') }}</span><strong>{{ bulk_credentials.section }}</strong></div>
+            <div><span>{{ t('Contraseña') }}</span><code>{{ bulk_credentials.password }}</code></div>
+          </div>
+          <button class="primary-btn compact" type="button" data-copy-credentials>{{ icon('copy') }}{{ t('Copiar credenciales') }}</button>
+        </section>
+        {% endif %}
+
+        {% if import_summary and import_summary.section_id == sec['id'] %}
+        <section class="import-summary-card section-import-summary">
+          <strong>{{ t('Importación masiva completada') }}</strong>
+          <span>{{ t('Importados') }}: {{ import_summary.imported }} · {{ t('Omitidos') }}: {{ import_summary.skipped }}</span>
+          {% if import_summary.errors %}
+          <ul>{% for error in import_summary.errors %}<li>{{ error }}</li>{% endfor %}</ul>
+          {% endif %}
+        </section>
+        {% endif %}
+
+        <div class="section-roster-actions">
+          <button class="primary-btn compact" type="button" data-open-modal="studentCreateModal">{{ icon('plus') }}{{ t('Añadir estudiante') }}</button>
+          {% if selected_section %}
+          <button class="ghost-btn compact" type="button" data-open-modal="studentImportModal">{{ icon('upload-simple') }}{{ t('Importar estudiantes') }}</button>
+          {% endif %}
+          <a class="ghost-btn compact" href="{{ url_for('teacher_section_report', section_id=sec['id']) }}">{{ icon('file-text') }}{{ t('Reporte de sección') }}</a>
+          <button class="ghost-btn compact" type="button" data-open-section-modal data-id="{{ sec['id'] }}" data-url="{{ url_for('teacher_section_edit', section_id=sec['id']) }}" data-name="{{ sec['name']|e }}" data-description="{{ (sec['description'] or '')|e }}">{{ icon('pencil-simple') }}{{ t('Editar sección') }}</button>
+          <form method="post" action="{{ url_for('teacher_section_archive', section_id=sec['id']) }}" data-confirm data-confirm-title="{{ t('Archivar sección') }}" data-confirm-text="{{ t('Esta acción requiere confirmación.') }} {{ t('Los elementos archivados permanecen en los resultados históricos, pero se ocultan de las vistas normales de gestión.') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="return_q" value="{{ filters.q }}">
+            <input type="hidden" name="return_section" value="{{ filters.section }}">
+            <button class="danger-btn compact" type="submit">{{ icon('archive') }}{{ t('Archivar sección') }}</button>
+          </form>
+        </div>
+
+        {% if section_students %}
+        <form class="section-bulk-form section-roster-panel" method="post" action="{{ url_for('teacher_students_bulk') }}" data-section-bulk-form>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="section_id" value="{{ sec['id'] }}">
+          <input type="hidden" name="return_q" value="{{ filters.q }}">
+          <input type="hidden" name="return_section" value="{{ filters.section }}">
+          <div class="section-bulk-toolbar">
+            <label class="bulk-select-all">
+              <input type="checkbox" data-section-select-all>
+              <span>{{ t('Seleccionar todo') }}</span>
+            </label>
+            <label class="bulk-action-field">
+              <span>{{ t('Acción masiva') }}</span>
+              <select name="bulk_action" data-section-bulk-action>
+                <option value="archive">{{ t('Archivar seleccionados') }}</option>
+                {% if sections|length > 1 %}
+                <option value="move">{{ t('Mover a otra sección') }}</option>
+                {% endif %}
+              </select>
+            </label>
+            <label class="bulk-target-field" data-bulk-target-wrap hidden>
+              <span>{{ t('Sección destino') }}</span>
+              <select name="target_section_id">
+                <option value="">{{ t('Seleccionar sección') }}</option>
+                {% for target in sections %}
+                {% if target['id'] != sec['id'] %}
+                <option value="{{ target['id'] }}">{{ target['name'] }}</option>
+                {% endif %}
+                {% endfor %}
+              </select>
+            </label>
+            <button class="primary-btn" type="submit">{{ t('Aplicar a seleccionados') }}</button>
+            <span class="bulk-selection-count" data-selected-count>{{ t('0 seleccionados') }}</span>
+          </div>
+
+          <div class="roster-table-frame">
+            <table class="roster-table section-student-table" data-roster-table="students" aria-label="{{ sec['name'] }}">
+              <thead>
+                <tr>
+                  <th scope="col" class="checkbox-heading">{{ t('Seleccionar') }}</th>
+                  <th scope="col">{{ t('Estudiante') }}</th>
+                  <th scope="col">{{ t('Acceso') }}</th>
+                  <th scope="col">{{ t('Estado') }}</th>
+                  <th scope="col">{{ t('Notas') }}</th>
+                  <th scope="col" class="actions-heading">{{ t('Acciones') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for st in section_students %}
+                <tr class="{{ 'is-inactive' if not st['is_active'] else '' }}" data-student-row="{{ st['id'] }}">
+                  <td data-label="{{ t('Seleccionar') }}" class="checkbox-cell"><input type="checkbox" name="student_ids" value="{{ st['id'] }}" data-section-checkbox></td>
+                  <th scope="row" data-label="{{ t('Estudiante') }}">
+                    <span class="roster-identity"><span class="roster-avatar" aria-hidden="true">{{ st['full_name'][0]|upper }}</span><span class="roster-identity-copy"><strong class="roster-primary-text">{{ st['full_name'] }}</strong><span class="roster-meta-line"><small class="roster-code roster-code-inline">{{ st['student_code'] or '—' }}</small><small class="roster-email">{{ st['email'] or t('Acceso pendiente') }}</small></span></span></span>
+                  </th>
+                  <td data-label="{{ t('Acceso') }}">
+                    <span class="account-state {{ 'ready' if st['email'] and st['password_hash'] else 'pending' }}"><span>{{ t('Acceso listo') if st['email'] and st['password_hash'] else t('Acceso pendiente') }}</span>{% if st['must_change_password'] and st['password_hash'] %}<small>{{ t('Requiere cambio de contraseña en el próximo ingreso') }}</small>{% endif %}</span>
+                  </td>
+                  <td data-label="{{ t('Estado') }}"><span class="status-dot {{ 'live' if st['is_active'] else 'bank' }}">{{ t('Activo') if st['is_active'] else t('Inactivo') }}</span></td>
+                  <td data-label="{{ t('Notas') }}" class="roster-notes"><span>{{ st['notes'] or '—' }}</span><a class="report-link compact" href="{{ url_for('teacher_student_report', student_id=st['id']) }}">{{ icon('file-text') }}{{ t('Ver reporte') }}</a></td>
+                  <td data-label="{{ t('Acciones') }}" class="roster-actions-cell">
+                    <div class="roster-row-actions">
+                      <button class="ghost-btn compact" type="button" data-open-student-modal data-id="{{ st['id'] }}" data-url="{{ url_for('teacher_student_edit', student_id=st['id']) }}" data-name="{{ st['full_name']|e }}" data-email="{{ (st['email'] or '')|e }}" data-section-id="{{ st['section_id'] }}" data-code="{{ (st['student_code'] or '')|e }}" data-notes="{{ (st['notes'] or '')|e }}" data-active="{{ 1 if st['is_active'] else 0 }}">{{ icon('pencil-simple') }}{{ t('Editar') }}</button>
+                      <button class="ghost-btn compact" type="button" data-open-password-modal data-id="{{ st['id'] }}" data-url="{{ url_for('teacher_student_password', student_id=st['id']) }}" data-name="{{ st['full_name']|e }}" data-email="{{ (st['email'] or '')|e }}" {% if not st['email'] %}disabled{% endif %}>{{ icon('key') }}{{ t('Restablecer contraseña') }}</button>
+                      <form method="post" action="{{ url_for('teacher_student_archive', student_id=st['id']) }}" data-confirm data-confirm-title="{{ t('Archivar estudiante') }}" data-confirm-text="{{ t('Esta acción requiere confirmación.') }} {{ t('Los elementos archivados permanecen en los resultados históricos, pero se ocultan de las vistas normales de gestión.') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="return_q" value="{{ filters.q }}">
+                        <input type="hidden" name="return_section" value="{{ filters.section }}">
+                        <button class="danger-btn compact" type="submit">{{ icon('archive') }}{{ t('Archivar') }}</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </form>
+        {% else %}
+        <div class="empty-state bank-empty roster-empty-state">{{ icon('users-three-duotone') }}<h2>{{ t('No se encontraron estudiantes') }}</h2><p>{{ t('Añadí un estudiante a esta sección o revisá la configuración de la sección.') }}</p></div>
+        {% endif %}
+      </section>
+      {% endif %}
+
+      {% if not sections %}
+      <div class="empty-state bank-empty roster-empty-state">{{ icon('users-three-duotone') }}<h2>{{ t('No se encontraron estudiantes') }}</h2><p>{{ t('Primero creá una sección y después agregá estudiantes dentro de ella.') }}</p></div>
+      {% endif %}
     </div>
-    {% else %}<div class="empty-state bank-empty">{{ icon('users-three-duotone') }}<h2>{{ t('No students found') }}</h2><p>{{ t('Add a student manually or change the current filters.') }}</p></div>{% endif %}
-  </section>
-  </div></div>
+  </div>
 </main>
 
 <dialog class="app-modal app-modal-wide" id="studentCreateModal" aria-labelledby="studentCreateTitle">
   <form method="post" class="modal-form" action="{{ url_for('teacher_student_new') }}" autocomplete="off" data-reset-on-open="1">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="modal-header"><div><p class="eyebrow">{{ t('Manual enrollment') }}</p><h2 id="studentCreateTitle">{{ t('Add student') }}</h2><p class="modal-subtitle">{{ t('Email and password are required for every student account.') }}</p></div><button class="modal-close icon-only" type="button" data-close-modal aria-label="{{ t('Close') }}">{{ icon('x') }}</button></div>
+    <input type="hidden" name="return_q" value="{{ filters.q }}">
+    <input type="hidden" name="return_section" value="{{ filters.section }}">
+    <div class="modal-header"><div><p class="eyebrow">{{ t('Alta manual') }}</p><h2 id="studentCreateTitle">{{ t('Añadir estudiante') }}</h2><p class="modal-subtitle">{{ t('El correo y la contraseña son obligatorios para cada cuenta de estudiante.') }}</p></div><button class="modal-close icon-only" type="button" data-close-modal aria-label="{{ t('Cerrar') }}">{{ icon('x') }}</button></div>
     <div class="modal-body">
       <div class="form-grid two modal-two-col">
-        <label><span>{{ t('Full name') }}</span><input type="text" name="full_name" required maxlength="120" placeholder="{{ t('Student full name') }}"></label>
-        <label><span>{{ t('Email address') }}</span><input type="email" name="email" required maxlength="254" inputmode="email" autocomplete="off" placeholder="{{ t('student@example.com') }}"><small class="field-help">{{ t('Email is used as the student username and must be unique.') }}</small></label>
-        <label><span>{{ t('Section / group') }}</span><select name="section_id" required><option value="">{{ t('Select section') }}</option>{% for sec in sections %}<option value="{{ sec['id'] }}">{{ sec['name'] }}</option>{% endfor %}</select></label>
-        <label><span>{{ t('Student code') }} <small>{{ t('optional') }}</small></span><input type="text" name="student_code" maxlength="60" placeholder="{{ t('ID, code or carnet') }}"></label>
+        <label><span>{{ t('Nombre completo') }}</span><input type="text" name="full_name" required maxlength="120" placeholder="{{ t('Nombre completo del estudiante') }}"></label>
+        <label><span>{{ t('Correo electrónico') }}</span><input type="email" name="email" required maxlength="254" inputmode="email" autocomplete="off" placeholder="{{ t('estudiante@ejemplo.com') }}"><small class="field-help">{{ t('El correo se usa como usuario del estudiante y debe ser único.') }}</small></label>
+        <label><span>{{ t('Sección / grupo') }}</span><select name="section_id" required><option value="">{{ t('Seleccionar sección') }}</option>{% for sec in sections %}<option value="{{ sec['id'] }}" {{ 'selected' if filters.section == sec['id']|string else '' }}>{{ sec['name'] }}</option>{% endfor %}</select></label>
+        <label><span>{{ t('Código de estudiante') }} <small>{{ t('opcional') }}</small></span><input type="text" name="student_code" maxlength="60" placeholder="{{ t('DNI, código o carnet') }}"></label>
       </div>
       <fieldset class="password-setup-box">
-        <legend>{{ t('Password setup') }}</legend>
+        <legend>{{ t('Configuración de contraseña') }}</legend>
         <div class="password-mode-grid">
-          <label class="choice-tile"><input type="radio" name="password_mode" value="auto" checked><span><strong>{{ t('Generate secure temporary password') }}</strong><small>{{ t('Password shown only once') }}</small></span></label>
-          <label class="choice-tile"><input type="radio" name="password_mode" value="manual"><span><strong>{{ t('Use a teacher-defined password') }}</strong><small>{{ t('At least 8 characters, including a letter and a number.') }}</small></span></label>
+          <label class="choice-tile"><input type="radio" name="password_mode" value="auto" checked><span><strong>{{ t('Generar contraseña temporal segura') }}</strong><small>{{ t('La contraseña se muestra una sola vez') }}</small></span></label>
+          <label class="choice-tile"><input type="radio" name="password_mode" value="manual"><span><strong>{{ t('Usar una contraseña definida por el docente') }}</strong><small>{{ t('Al menos 8 caracteres, con una letra y un número.') }}</small></span></label>
         </div>
-        <label class="modal-field"><span>{{ t('Teacher-defined password') }}</span><input type="password" name="manual_password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="{{ t('Password') }}"><small class="field-help">{{ t('Only required when you choose a teacher-defined password.') }}</small></label>
-        <label class="toggle-row compact-toggle"><input type="checkbox" name="must_change_password" checked><span><strong>{{ t('Require password change at next sign-in') }}</strong><small>{{ t('Recommended for generated or reset passwords.') }}</small></span></label>
+        <label class="modal-field"><span>{{ t('Contraseña definida por el docente') }}</span><input type="password" name="manual_password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="{{ t('Contraseña') }}"><small class="field-help">{{ t('Solo es obligatoria cuando elegís una contraseña definida por el docente.') }}</small></label>
+        <label class="toggle-row compact-toggle"><input type="checkbox" name="must_change_password" checked><span><strong>{{ t('Requerir cambio de contraseña en el próximo ingreso') }}</strong><small>{{ t('Recomendado para contraseñas generadas o restablecidas.') }}</small></span></label>
       </fieldset>
-      <label><span>{{ t('Notes') }} <small>{{ t('optional') }}</small></span><textarea name="notes" rows="3" maxlength="500" placeholder="{{ t('Short teacher note') }}"></textarea></label>
+      <label><span>{{ t('Notas') }} <small>{{ t('opcional') }}</small></span><textarea name="notes" rows="3" maxlength="500" placeholder="{{ t('Nota breve del docente') }}"></textarea></label>
     </div>
-    <div class="modal-actions"><button class="ghost-btn" type="button" data-close-modal>{{ t('Cancel') }}</button><button class="primary-btn" type="submit">{{ t('+ Add student') }}</button></div>
+    <div class="modal-actions"><button class="ghost-btn" type="button" data-close-modal>{{ t('Cancelar') }}</button><button class="primary-btn" type="submit">{{ t('+ Añadir estudiante') }}</button></div>
   </form>
 </dialog>
 
 <dialog class="app-modal" id="sectionCreateModal" aria-labelledby="sectionCreateTitle">
   <form method="post" class="modal-form" action="{{ url_for('teacher_section_new') }}" data-reset-on-open="1">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="modal-header"><div><p class="eyebrow">{{ t('Organization') }}</p><h2 id="sectionCreateTitle">{{ t('Create section') }}</h2></div><button class="modal-close icon-only" type="button" data-close-modal aria-label="{{ t('Close') }}">{{ icon('x') }}</button></div>
-    <div class="modal-body"><label><span>{{ t('Section name') }}</span><input type="text" name="name" required maxlength="60" autocomplete="off" placeholder="{{ t('Example: 1° A') }}"></label><label><span>{{ t('Description') }} <small>{{ t('optional') }}</small></span><textarea name="description" rows="4" maxlength="240" placeholder="{{ t('Grade, shift or other reference') }}"></textarea></label></div>
-    <div class="modal-actions"><button class="ghost-btn" type="button" data-close-modal>{{ t('Cancel') }}</button><button class="primary-btn" type="submit">{{ t('+ Create section') }}</button></div>
+    <input type="hidden" name="return_q" value="{{ filters.q }}">
+    <input type="hidden" name="return_section" value="{{ filters.section }}">
+    <div class="modal-header"><div><p class="eyebrow">{{ t('Organización') }}</p><h2 id="sectionCreateTitle">{{ t('Crear sección') }}</h2></div><button class="modal-close icon-only" type="button" data-close-modal aria-label="{{ t('Cerrar') }}">{{ icon('x') }}</button></div>
+    <div class="modal-body"><label><span>{{ t('Nombre de la sección') }}</span><input type="text" name="name" required maxlength="60" autocomplete="off" placeholder="{{ t('Ejemplo: 1° A') }}"></label><label><span>{{ t('Descripción') }} <small>{{ t('opcional') }}</small></span><textarea name="description" rows="4" maxlength="240" placeholder="{{ t('Curso, turno u otra referencia') }}"></textarea></label></div>
+    <div class="modal-actions"><button class="ghost-btn" type="button" data-close-modal>{{ t('Cancelar') }}</button><button class="primary-btn" type="submit">{{ t('+ Crear sección') }}</button></div>
   </form>
 </dialog>
 
 <dialog class="app-modal app-modal-wide" id="studentImportModal" aria-labelledby="studentImportTitle">
-  <form method="post" class="modal-form" action="{{ url_for('teacher_students_import') }}" enctype="multipart/form-data" autocomplete="off">
+  <form method="post" class="modal-form" action="{{ url_for('teacher_students_import') }}" enctype="multipart/form-data" autocomplete="off" data-reset-on-open="1">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="modal-header"><div><p class="eyebrow">{{ t('Bulk student import') }}</p><h2 id="studentImportTitle">{{ t('Import students') }}</h2><p class="modal-subtitle">{{ t('Required columns') }}: NIE, Nombre, Apellido, Correo.</p></div><button class="modal-close icon-only" type="button" data-close-modal aria-label="{{ t('Close') }}">{{ icon('x') }}</button></div>
+    <input type="hidden" name="section_id" value="{{ selected_section.id if selected_section else '' }}">
+    <input type="hidden" name="return_q" value="{{ filters.q }}">
+    <input type="hidden" name="return_section" value="{{ filters.section }}">
+    <div class="modal-header"><div><p class="eyebrow">{{ t('Importación masiva de estudiantes') }}</p><h2 id="studentImportTitle">{{ t('Importar estudiantes') }}</h2><p class="modal-subtitle">{{ t('Columnas requeridas') }}: NIE, Nombre, Apellido, Correo.</p><p class="modal-subtitle" data-section-context>{% if selected_section %}{{ t('Sección') }}: {{ selected_section['name'] }}{% else %}{{ t('Abrí una sección primero.') }}{% endif %}</p></div><button class="modal-close icon-only" type="button" data-close-modal aria-label="{{ t('Cerrar') }}">{{ icon('x') }}</button></div>
     <div class="modal-body">
-      <div class="import-template-row"><p>{{ t('NIE, First name and Last name are required. Email is optional when automatic email generation is enabled.') }}</p><a class="ghost-btn compact" href="{{ url_for('teacher_students_import_template') }}">{{ t('Download CSV template') }}</a></div>
-      <label><span>{{ t('CSV file') }}</span><input type="file" name="csv_file" accept=".csv,text/csv" required></label>
-      <label><span>{{ t('Section / group') }}</span><select name="section_id" required><option value="">{{ t('Select section') }}</option>{% for sec in sections %}<option value="{{ sec['id'] }}">{{ sec['name'] }}</option>{% endfor %}</select></label>
-      <fieldset class="password-setup-box"><legend>{{ t('Email') }}</legend><label class="toggle-row compact-toggle"><input type="checkbox" name="generate_email_from_nie" id="bulkGenerateEmail" checked><span><strong>{{ t('Generate email from NIE') }}</strong><small>NIE@clases.edu</small></span></label><label id="bulkDomainField"><span>{{ t('Email domain') }}</span><input type="text" name="email_domain" value="clases.edu" placeholder="clases.edu"></label><p class="field-help" id="bulkCustomEmailHelp" hidden>{{ t('Use the Correo column from the CSV') }}</p></fieldset>
-      <fieldset class="password-setup-box"><legend>{{ t('Batch password') }}</legend><div class="password-mode-grid"><label class="choice-tile"><input type="radio" name="batch_password_mode" value="auto" checked><span><strong>{{ t('Generate a temporary password for this batch') }}</strong></span></label><label class="choice-tile"><input type="radio" name="batch_password_mode" value="manual"><span><strong>{{ t('Use a teacher-defined temporary password') }}</strong></span></label></div><label><span>{{ t('Password') }}</span><input type="password" name="batch_password" minlength="8" maxlength="128" autocomplete="new-password"></label><label class="toggle-row compact-toggle"><input type="checkbox" name="must_change_password" checked><span><strong>{{ t('Require password change at next sign-in') }}</strong></span></label></fieldset>
-      <div class="import-help-card"><strong>{{ t('CSV import notes') }}</strong><p>{{ t('Automatic emails use the NIE as the username portion.') }} {{ t('Existing NIE or email records are skipped instead of overwritten.') }}</p></div>
+      <div class="import-template-row"><p>{{ t('NIE, Nombre y Apellido son obligatorios. El correo es opcional cuando activás la generación automática.') }}</p><a class="ghost-btn compact" href="{{ url_for('teacher_students_import_template') }}">{{ t('Descargar plantilla CSV') }}</a></div>
+      <label><span>{{ t('Archivo CSV') }}</span><input type="file" name="csv_file" accept=".csv,text/csv" required></label>
+      <fieldset class="password-setup-box"><legend>{{ t('Correo electrónico') }}</legend><label class="toggle-row compact-toggle"><input type="checkbox" name="generate_email_from_nie" id="bulkGenerateEmail" checked><span><strong>{{ t('Generar correo a partir del NIE') }}</strong><small>NIE@clases.edu</small></span></label><label id="bulkDomainField"><span>{{ t('Dominio del correo') }}</span><input type="text" name="email_domain" value="clases.edu" placeholder="clases.edu"></label><p class="field-help" id="bulkCustomEmailHelp" hidden>{{ t('Usá la columna Correo del CSV') }}</p></fieldset>
+      <fieldset class="password-setup-box"><legend>{{ t('Contraseña del lote') }}</legend><div class="password-mode-grid"><label class="choice-tile"><input type="radio" name="batch_password_mode" value="auto" checked><span><strong>{{ t('Generar una contraseña temporal para este lote') }}</strong></span></label><label class="choice-tile"><input type="radio" name="batch_password_mode" value="manual"><span><strong>{{ t('Usar una contraseña temporal definida por el docente') }}</strong></span></label></div><label><span>{{ t('Contraseña') }}</span><input type="password" name="batch_password" minlength="8" maxlength="128" autocomplete="new-password"></label><label class="toggle-row compact-toggle"><input type="checkbox" name="must_change_password" checked><span><strong>{{ t('Requerir cambio de contraseña en el próximo ingreso') }}</strong></span></label></fieldset>
+      <div class="import-help-card"><strong>{{ t('Notas de importación CSV') }}</strong><p>{{ t('Los correos automáticos usan el NIE como parte del usuario.') }} {{ t('Los registros con NIE o correo ya existentes se omiten en lugar de sobrescribirse.') }}</p></div>
     </div>
-    <div class="modal-actions"><button class="ghost-btn" type="button" data-close-modal>{{ t('Cancel') }}</button><button class="primary-btn" type="submit">{{ t('Import students now') }}</button></div>
+    <div class="modal-actions"><button class="ghost-btn" type="button" data-close-modal>{{ t('Cancelar') }}</button><button class="primary-btn" type="submit">{{ t('Importar estudiantes ahora') }}</button></div>
   </form>
 </dialog>
 
 <dialog class="app-modal" id="studentEditModal" aria-labelledby="studentEditTitle">
   <form method="post" class="modal-form" id="studentEditForm" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="modal-header"><div><p class="eyebrow">{{ t('Edit details') }}</p><h2 id="studentEditTitle">{{ t('Edit student') }}</h2></div><button class="modal-close icon-only" type="button" data-close-modal aria-label="{{ t('Close') }}">{{ icon('x') }}</button></div>
+    <input type="hidden" name="return_q" value="{{ filters.q }}">
+    <input type="hidden" name="return_section" value="{{ filters.section }}">
+    <div class="modal-header"><div><p class="eyebrow">{{ t('Editar detalles') }}</p><h2 id="studentEditTitle">{{ t('Editar estudiante') }}</h2></div><button class="modal-close icon-only" type="button" data-close-modal aria-label="{{ t('Cerrar') }}">{{ icon('x') }}</button></div>
     <div class="modal-body">
-      <label><span>{{ t('Full name') }}</span><input type="text" name="full_name" required maxlength="120"></label>
-      <label><span>{{ t('Email address') }}</span><input type="email" name="email" required maxlength="254" inputmode="email"></label>
-      <div class="form-grid two"><label><span>{{ t('Section') }}</span><select name="section_id" required>{% for sec in sections %}<option value="{{ sec['id'] }}">{{ sec['name'] }}</option>{% endfor %}</select></label><label><span>{{ t('Student code') }}</span><input type="text" name="student_code" maxlength="60"></label></div>
-      <label><span>{{ t('Notes') }}</span><textarea name="notes" rows="3" maxlength="500"></textarea></label>
-      <label class="toggle-row compact-toggle"><input type="checkbox" name="is_active"><span><strong>{{ t('Active student') }}</strong><small>{{ t('Inactive students cannot pass roster validation.') }}</small></span></label>
+      <label><span>{{ t('Nombre completo') }}</span><input type="text" name="full_name" required maxlength="120"></label>
+      <label><span>{{ t('Correo electrónico') }}</span><input type="email" name="email" required maxlength="254" inputmode="email"></label>
+      <div class="form-grid two"><label><span>{{ t('Sección') }}</span><select name="section_id" required>{% for sec in sections %}<option value="{{ sec['id'] }}">{{ sec['name'] }}</option>{% endfor %}</select></label><label><span>{{ t('Código de estudiante') }}</span><input type="text" name="student_code" maxlength="60"></label></div>
+      <label><span>{{ t('Notas') }}</span><textarea name="notes" rows="3" maxlength="500"></textarea></label>
+      <label class="toggle-row compact-toggle"><input type="checkbox" name="is_active"><span><strong>{{ t('Estudiante activo') }}</strong><small>{{ t('Los estudiantes inactivos no pasan la validación del padrón.') }}</small></span></label>
     </div>
-    <div class="modal-actions"><button class="ghost-btn" type="button" data-close-modal>{{ t('Cancel') }}</button><button class="primary-btn" type="submit">{{ t('Save changes') }}</button></div>
+    <div class="modal-actions"><button class="ghost-btn" type="button" data-close-modal>{{ t('Cancelar') }}</button><button class="primary-btn" type="submit">{{ t('Guardar cambios') }}</button></div>
   </form>
 </dialog>
 
 <dialog class="app-modal" id="passwordResetModal" aria-labelledby="passwordResetTitle">
   <form method="post" class="modal-form password-reset-form-modal" id="passwordResetForm" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="modal-header"><div><p class="eyebrow">{{ t('Student account') }}</p><h2 id="passwordResetTitle">{{ t('Reset student password') }}</h2><p class="modal-subtitle" data-password-student></p></div><button class="modal-close icon-only" type="button" data-close-modal aria-label="{{ t('Close') }}">{{ icon('x') }}</button></div>
+    <div class="modal-header"><div><p class="eyebrow">{{ t('Cuenta del estudiante') }}</p><h2 id="passwordResetTitle">{{ t('Restablecer contraseña del estudiante') }}</h2><p class="modal-subtitle" data-password-student></p></div><button class="modal-close icon-only" type="button" data-close-modal aria-label="{{ t('Cerrar') }}">{{ icon('x') }}</button></div>
     <div class="modal-body">
-      <div class="password-mode-grid"><label class="choice-tile"><input type="radio" name="password_mode" value="auto" checked><span><strong>{{ t('Generate new temporary password') }}</strong></span></label><label class="choice-tile"><input type="radio" name="password_mode" value="manual"><span><strong>{{ t('Set a new password') }}</strong></span></label></div>
-      <label><span>{{ t('New teacher-defined password') }}</span><input type="password" name="manual_password" minlength="8" maxlength="128" autocomplete="new-password"><small class="field-help">{{ t('At least 8 characters, including a letter and a number.') }}</small></label>
-      <label class="toggle-row compact-toggle"><input type="checkbox" name="must_change_password" checked><span><strong>{{ t('Require password change at next sign-in') }}</strong></span></label>
+      <div class="password-mode-grid"><label class="choice-tile"><input type="radio" name="password_mode" value="auto" checked><span><strong>{{ t('Generar nueva contraseña temporal') }}</strong></span></label><label class="choice-tile"><input type="radio" name="password_mode" value="manual"><span><strong>{{ t('Definir una nueva contraseña') }}</strong></span></label></div>
+      <label><span>{{ t('Nueva contraseña definida por el docente') }}</span><input type="password" name="manual_password" minlength="8" maxlength="128" autocomplete="new-password"><small class="field-help">{{ t('Al menos 8 caracteres, con una letra y un número.') }}</small></label>
+      <label class="toggle-row compact-toggle"><input type="checkbox" name="must_change_password" checked><span><strong>{{ t('Requerir cambio de contraseña en el próximo ingreso') }}</strong></span></label>
     </div>
-    <div class="modal-actions"><button class="ghost-btn" type="button" data-close-modal>{{ t('Cancel') }}</button><button class="primary-btn" type="submit">{{ t('Reset password') }}</button></div>
+    <div class="modal-actions"><button class="ghost-btn" type="button" data-close-modal>{{ t('Cancelar') }}</button><button class="primary-btn" type="submit">{{ t('Restablecer contraseña') }}</button></div>
   </form>
 </dialog>
 
 <dialog class="app-modal" id="sectionEditModal" aria-labelledby="sectionEditTitle">
   <form method="post" class="modal-form" id="sectionEditForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="modal-header"><div><p class="eyebrow">{{ t('Edit details') }}</p><h2 id="sectionEditTitle">{{ t('Edit section') }}</h2></div><button class="modal-close icon-only" type="button" data-close-modal aria-label="{{ t('Close') }}">{{ icon('x') }}</button></div>
-    <div class="modal-body"><label><span>{{ t('Section name') }}</span><input type="text" name="name" required maxlength="60"></label><label><span>{{ t('Description') }}</span><textarea name="description" rows="4" maxlength="240"></textarea></label></div>
-    <div class="modal-actions"><button class="ghost-btn" type="button" data-close-modal>{{ t('Cancel') }}</button><button class="primary-btn" type="submit">{{ t('Save section') }}</button></div>
+    <input type="hidden" name="return_q" value="{{ filters.q }}">
+    <input type="hidden" name="return_section" value="{{ filters.section }}">
+    <div class="modal-header"><div><p class="eyebrow">{{ t('Editar detalles') }}</p><h2 id="sectionEditTitle">{{ t('Editar sección') }}</h2></div><button class="modal-close icon-only" type="button" data-close-modal aria-label="{{ t('Cerrar') }}">{{ icon('x') }}</button></div>
+    <div class="modal-body"><label><span>{{ t('Nombre de la sección') }}</span><input type="text" name="name" required maxlength="60"></label><label><span>{{ t('Descripción') }}</span><textarea name="description" rows="4" maxlength="240"></textarea></label></div>
+    <div class="modal-actions"><button class="ghost-btn" type="button" data-close-modal>{{ t('Cancelar') }}</button><button class="primary-btn" type="submit">{{ t('Guardar sección') }}</button></div>
   </form>
 </dialog>
-<script>
-const bulkEmailCheck=document.getElementById('bulkGenerateEmail'),bulkDomain=document.getElementById('bulkDomainField'),bulkCustom=document.getElementById('bulkCustomEmailHelp');function syncBulkEmail(){if(!bulkEmailCheck)return;bulkDomain.hidden=!bulkEmailCheck.checked;bulkCustom.hidden=bulkEmailCheck.checked}bulkEmailCheck?.addEventListener('change',syncBulkEmail);syncBulkEmail();
-const batchRadios=[...document.querySelectorAll('input[name="batch_password_mode"]')],batchPassword=document.querySelector('input[name="batch_password"]');function syncBatchPassword(){if(!batchPassword)return;const mode=batchRadios.find(r=>r.checked)?.value||'auto';batchPassword.disabled=mode!=='manual';batchPassword.closest('label')?.classList.toggle('field-muted',mode!=='manual');if(mode!=='manual')batchPassword.value=''}batchRadios.forEach(r=>r.addEventListener('change',syncBatchPassword));syncBatchPassword();
-</script>
 {% endblock %}
