@@ -24,7 +24,7 @@ Las evaluaciones gestionadas con archivos dispersos o formularios genéricos dif
 - Un intento por estudiante y asignación, reforzado por índice único PostgreSQL y transacciones con locks de fila.
 - Snapshot inmutable de preguntas, política, idioma y contexto al iniciar.
 - Calificación automática de siete tipos de pregunta.
-- Resultados filtrables, PDF y exportación CSV/XLSX.
+- Resultados filtrables, PDF y exportación CSV/XLSX. Los exportes imprimibles de exámenes (PDF/Markdown/DOCX) barajan determinísticamente opciones/ítems para no exponer la clave por orden.
 - Telemetría de integridad como señal revisable, nunca como prueba concluyente.
 - Penalizaciones manuales, justificadas, revocables y auditables sin alterar la nota académica original.
 

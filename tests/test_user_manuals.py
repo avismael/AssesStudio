@@ -272,12 +272,15 @@ def test_teacher_catalog_subject_cards_open_a_category_view():
     index_body = index.get_data(as_text=True)
     assert index.status_code == 200
     assert 'Catalog Route Alpha' in index_body
+    assert 'data-open-subject-modal' in index_body
+    assert f'data-url="/teacher/subjects/{subject_a}/edit"' in index_body
     assert 'Alpha Category' not in index_body
 
     response = client.get(f"/teacher/catalog/subject/{subject_b}")
     body = response.get_data(as_text=True)
     assert response.status_code == 200
     assert 'Catalog Route Beta' in body
+    assert f'data-url="/teacher/subjects/{subject_b}/edit"' in body
     assert 'Beta Category' in body
     assert 'Alpha Category' not in body
 

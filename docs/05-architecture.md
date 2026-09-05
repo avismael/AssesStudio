@@ -155,7 +155,7 @@ No existe regla automática de descuento. El owner aplica puntos positivos con m
 
 ## Reportes e importaciones
 
-- PDF: ReportLab, intento individual, idioma snapshot, resumen, integridad y motivos activos; sin clave.
+- PDF: ReportLab, intento individual, idioma snapshot, resumen, integridad y motivos activos; sin clave. Los exports imprimibles de exámenes (PDF/Markdown/DOCX) barajan de forma determinística las opciones/ítems para evitar filtrar el orden base del banco.
 - CSV: resultados filtrados, columnas académicas, categorías/tipos e integridad.
 - XLSX: hoja Results más Integrity Events, limitada a los attempt IDs filtrados.
 - Import: CSV UTF-8 BOM/UTF-8/Latin-1, coma o punto y coma, aliases bilingües; procesamiento por fila.

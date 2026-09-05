@@ -18,7 +18,8 @@
   </div>
   <div class="catalog-card-grid catalog-subject-grid">
     {% for s in subjects %}
-      <a class="catalog-item catalog-summary-card catalog-subject-card" href="{{ url_for('teacher_catalog_subject', subject_id=s['id']) }}">
+      <article class="catalog-item catalog-summary-card catalog-subject-card">
+        <a class="catalog-subject-link" href="{{ url_for('teacher_catalog_subject', subject_id=s['id']) }}">
         <div class="catalog-stats">
           <span>{{ s['category_count'] }} {{ 'categorías' }}</span>
           <span>{{ s['question_count'] }} {{ 'preguntas' }}</span>
@@ -28,7 +29,13 @@
           {% if s['description'] %}<p>{{ s['description'] }}</p>{% endif %}
         </div>
         <div class="catalog-card-cta">{{ icon('arrow-right') }}{{ 'Abrir categorías' }}</div>
-      </a>
+        </a>
+        {% if current_teacher_user %}
+          <div class="card-action-row">
+            <button class="ghost-btn compact" type="button" data-open-subject-modal data-url="{{ url_for('teacher_subject_edit', subject_id=s['id']) }}" data-name="{{ s['name']|e }}" data-description="{{ (s['description'] or '')|e }}">{{ icon('pencil-simple') }}{{ 'Editar' }}</button>
+          </div>
+        {% endif %}
+      </article>
     {% endfor %}
   </div>
   {% else %}
@@ -38,7 +45,12 @@
       <h2>{{ selected_subject['name'] }}</h2>
       <p class="catalog-subject-description">{{ selected_subject['description'] if selected_subject['description'] else 'Sin descripción' }}</p>
     </div>
-    <a class="ghost-btn compact" href="{{ url_for('teacher_catalog') }}">{{ icon('arrow-left') }}{{ 'Volver a materias' }}</a>
+    <div class="card-action-row">
+      {% if current_teacher_user %}
+        <button class="ghost-btn compact" type="button" data-open-subject-modal data-url="{{ url_for('teacher_subject_edit', subject_id=selected_subject['id']) }}" data-name="{{ selected_subject['name']|e }}" data-description="{{ (selected_subject['description'] or '')|e }}">{{ icon('pencil-simple') }}{{ 'Editar' }}</button>
+      {% endif %}
+      <a class="ghost-btn compact" href="{{ url_for('teacher_catalog') }}">{{ icon('arrow-left') }}{{ 'Volver a materias' }}</a>
+    </div>
   </div>
   <div class="catalog-card-grid catalog-category-grid">
     {% for c in categories %}

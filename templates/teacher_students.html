@@ -31,14 +31,17 @@
               <div><strong>{{ sec['student_count'] or 0 }}</strong><span>{{ icon('users-three') }}{{ t('estudiantes') }}</span></div>
               <div><strong>{{ sec['active_count'] or 0 }}</strong><span>{{ icon('check-circle') }}{{ t('activos') }}</span></div>
             </div>
+          </div>
+          <div class="section-roster-footer">
             <a class="ghost-btn compact section-open-link" href="{{ url_for('teacher_students_section', section_id=sec['id']) }}">{{ icon('arrow-right') }}{{ t('Abrir sección') }}</a>
+            <button class="ghost-btn compact section-open-link secondary" type="button" data-open-section-modal data-id="{{ sec['id'] }}" data-url="{{ url_for('teacher_section_edit', section_id=sec['id']) }}" data-name="{{ sec['name']|e }}" data-description="{{ (sec['description'] or '')|e }}">{{ icon('pencil-simple') }}{{ t('Editar') }}</button>
           </div>
         </article>
         {% endfor %}
       </section>
 
       <div class="roster-table-frame">
-        <table class="roster-table section-student-table" data-roster-table="sections" aria-label="{{ t('Secciones') }}">
+        <table class="roster-table" data-roster-table="sections" aria-label="{{ t('Secciones') }}">
           <thead>
             <tr>
               <th scope="col">{{ t('Section') }}</th>
@@ -70,71 +73,19 @@
         </table>
       </div>
 
-      {% if students %}
-      <section class="section-roster-detail" aria-label="{{ t('Students') }}">
-        <header class="section-detail-header">
-          <div>
-            <p class="eyebrow">{{ icon('users-three') }}{{ t('Students') }}</p>
-            <p class="section-detail-kicker">{{ t('Roster and sections') }}</p>
-            <h2>{{ t('Students') }}</h2>
-            <p>{{ t('Use the section filter only to narrow by NIE, name, or section.') }}</p>
-          </div>
-        </header>
-        <div class="roster-table-frame">
-          <table class="roster-table section-student-table" data-roster-table="students" aria-label="{{ t('Students') }}">
-            <thead>
-              <tr>
-                <th scope="col">{{ t('Student') }}</th>
-                <th scope="col">{{ t('Section') }}</th>
-                <th scope="col">{{ t('Access') }}</th>
-                <th scope="col">{{ t('Status') }}</th>
-                <th scope="col">{{ t('Notes') }}</th>
-                <th scope="col" class="actions-heading">{{ t('Actions') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for st in students %}
-              <tr class="{{ 'is-inactive' if not st['is_active'] else '' }}" data-student-row="{{ st['id'] }}">
-                <th scope="row" data-label="{{ t('Student') }}">
-                  <span class="roster-identity"><span class="roster-avatar" aria-hidden="true">{{ st['full_name'][0]|upper }}</span><span class="roster-identity-copy"><strong class="roster-primary-text">{{ st['full_name'] }}</strong><span class="roster-meta-line"><small class="roster-code roster-code-inline">{{ st['student_code'] or '—' }}</small><small class="roster-email">{{ st['email'] or t('Access pending') }}</small></span></span></span>
-                </th>
-                <td data-label="{{ t('Section') }}">{{ st['section_name'] }}</td>
-                <td data-label="{{ t('Access') }}"><span class="account-state {{ 'ready' if st['email'] and st['password_hash'] else 'pending' }}"><span>{{ t('Access ready') if st['email'] and st['password_hash'] else t('Access pending') }}</span>{% if st['must_change_password'] and st['password_hash'] %}<small>{{ t('Require password change on next login') }}</small>{% endif %}</span></td>
-                <td data-label="{{ t('Status') }}"><span class="status-dot {{ 'live' if st['is_active'] else 'bank' }}">{{ t('Active') if st['is_active'] else t('Inactive') }}</span></td>
-                <td data-label="{{ t('Notes') }}" class="roster-notes"><span>{{ st['notes'] or '—' }}</span><a class="report-link compact" href="{{ url_for('teacher_student_report', student_id=st['id']) }}">{{ icon('file-text') }}{{ t('Report') }}</a></td>
-                <td data-label="{{ t('Actions') }}" class="roster-actions-cell">
-                  <div class="roster-row-actions">
-                    <button class="ghost-btn compact" type="button" data-open-student-modal data-id="{{ st['id'] }}" data-url="{{ url_for('teacher_student_edit', student_id=st['id']) }}" data-name="{{ st['full_name']|e }}" data-email="{{ (st['email'] or '')|e }}" data-section-id="{{ st['section_id'] }}" data-code="{{ (st['student_code'] or '')|e }}" data-notes="{{ (st['notes'] or '')|e }}" data-active="{{ 1 if st['is_active'] else 0 }}">{{ icon('pencil-simple') }}{{ t('Edit') }}</button>
-                    <button class="ghost-btn compact" type="button" data-open-password-modal data-id="{{ st['id'] }}" data-url="{{ url_for('teacher_student_password', student_id=st['id']) }}" data-name="{{ st['full_name']|e }}" data-email="{{ (st['email'] or '')|e }}" {% if not st['email'] %}disabled{% endif %}>{{ icon('key') }}{{ t('Reset password') }}</button>
-                    <form method="post" action="{{ url_for('teacher_student_archive', student_id=st['id']) }}" data-confirm data-confirm-title="{{ t('Archive student') }}" data-confirm-text="{{ t('This action requires confirmation.') }} {{ t('Archived items remain in historical results but are hidden from regular management views.') }}">
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                      <input type="hidden" name="return_q" value="{{ filters.q }}">
-                      <input type="hidden" name="return_section" value="{{ filters.section }}">
-                      <button class="danger-btn compact" type="submit">{{ icon('archive') }}{{ t('Archive') }}</button>
-                    </form>
-                  </div>
-                </td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      {% endif %}
       {% endif %}
 
       {% if selected_section %}
       {% set sec = selected_section %}
       {% set section_students = students_by_section.get(sec['id'], []) %}
-      <section class="section-roster-detail" aria-label="{{ sec['name'] }}">
-        <header class="section-detail-header">
-          <div>
+      <section class="section-students-view" aria-label="{{ sec['name'] }}">
+        <header class="section-students-view-header">
+          <div class="section-students-view-copy">
             <p class="eyebrow">{{ icon('users-three') }}{{ t('Espacio de la sección') }}</p>
-            <p class="section-detail-kicker">{{ t('Vista enfocada del padrón') }}</p>
             <h2>{{ sec['name'] }}</h2>
             <p>{{ sec['description'] or t('Todavía no hay descripción.') }}</p>
           </div>
-          <div class="section-detail-stats">
+          <div class="section-students-view-stats">
             <div><strong>{{ sec['student_count'] or 0 }}</strong><span>{{ icon('users-three') }}{{ t('estudiantes') }}</span></div>
             <div><strong>{{ sec['active_count'] or 0 }}</strong><span>{{ icon('check-circle') }}{{ t('activos') }}</span></div>
           </div>
@@ -245,7 +196,7 @@
           </div>
 
           <div class="roster-table-frame">
-            <table class="roster-table section-student-table" data-roster-table="students" aria-label="{{ sec['name'] }}">
+            <table class="roster-table" data-roster-table="students" aria-label="{{ sec['name'] }}">
               <thead>
                 <tr>
                   <th scope="col" class="checkbox-heading">{{ t('Seleccionar') }}</th>

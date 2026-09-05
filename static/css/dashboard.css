@@ -260,6 +260,12 @@ td { border-color: var(--primitive-slate-100); }
 .roster-identity small { overflow: hidden; color: var(--text-muted); font-size: .69rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .roster-avatar { display: grid; width: 2.4rem; height: 2.4rem; flex: 0 0 auto; place-items: center; border-radius: .8rem; background: linear-gradient(180deg, var(--primitive-cobalt-100), #dce7ff); color: var(--action-primary-hover); font-size: .72rem; font-weight: 850; }
 .roster-email { overflow: hidden; color: var(--text-muted); font-size: .7rem; font-weight: 520; text-overflow: ellipsis; white-space: nowrap; }
+.roster-section-pill { display: inline-flex; align-items: center; justify-content: center; padding: .34rem .62rem; border-radius: 999px; background: var(--surface-subtle); color: var(--text-strong); font-size: .74rem; font-weight: 800; }
+.roster-account-state { width: 100%; }
+.roster-status-dot { justify-content: center; }
+.roster-notes { display: grid; gap: .35rem; }
+.roster-notes-body { display: grid; gap: .2rem; }
+.roster-notes-text { color: var(--text-body); font-size: .76rem; line-height: 1.45; }
 .roster-table .account-state { display: inline-flex; width: fit-content; max-width: 100%; margin: 0; flex-wrap: wrap; justify-content: flex-start; gap: .2rem .45rem; padding: .42rem .6rem; border-radius: .85rem; }
 .roster-table .account-state small { text-align: left; }
 .roster-table .status-dot { display: inline-flex; width: fit-content; margin: 0; white-space: nowrap; padding: .42rem .58rem; border-radius: .85rem; }
@@ -286,34 +292,44 @@ td { border-color: var(--primitive-slate-100); }
 /* Section-first roster layout */
 .section-roster-stack { display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: .85rem; align-items: start; }
 .section-roster-card { border: 1px solid var(--border-subtle); border-radius: var(--primitive-radius-xl); background: var(--surface-card); box-shadow: var(--primitive-shadow-sm); overflow: clip; }
-.section-roster-card.is-overview { transition: transform var(--primitive-duration) var(--primitive-ease), box-shadow var(--primitive-duration) var(--primitive-ease), border-color var(--primitive-duration) var(--primitive-ease); }
+.section-roster-card.is-overview { display: grid; transition: transform var(--primitive-duration) var(--primitive-ease), box-shadow var(--primitive-duration) var(--primitive-ease), border-color var(--primitive-duration) var(--primitive-ease); }
 .section-roster-card.is-overview:hover { transform: translateY(-1px); box-shadow: var(--primitive-shadow-md); border-color: var(--primitive-cobalt-200); }
-.section-roster-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "copy meta" "copy action"; gap: .85rem 1rem; align-items: start; padding: 1.1rem 1.2rem; list-style: none; }
+.section-roster-summary { display: flex; flex-direction: column; gap: .9rem; align-items: center; padding: 1.15rem 1.2rem .95rem; list-style: none; }
 .section-roster-copy { display: grid; grid-area: copy; gap: .35rem; min-width: 0; }
-.section-roster-copy .eyebrow, .section-detail-header .eyebrow, .section-roster-lede strong, .section-roster-meta span, .section-open-link, .section-detail-stats span { display: inline-flex; align-items: center; gap: .32rem; }
-.section-roster-copy h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.03em; }
-.section-roster-copy p:last-child { margin: 0; color: var(--text-muted); font-size: .86rem; line-height: 1.5; }
-.section-roster-meta { display: flex; grid-area: meta; gap: .7rem; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
-.section-roster-meta > div { display: grid; flex: 1 1 7rem; gap: .1rem; min-width: 0; padding: .7rem .8rem; border-radius: var(--primitive-radius-md); background: var(--surface-subtle); text-align: center; }
-.section-roster-meta strong { color: var(--text-strong); font-size: 1.2rem; font-variant-numeric: tabular-nums; line-height: 1; }
-.section-roster-meta span { color: var(--text-muted); font-size: .66rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-.section-open-link { grid-area: action; justify-self: end; align-self: start; }
+.section-roster-copy .eyebrow, .section-roster-lede strong, .section-roster-meta span, .section-open-link { display: inline-flex; align-items: center; gap: .32rem; }
+.section-roster-copy { justify-items: center; text-align: center; max-width: 18rem; margin-inline: auto; }
+.section-roster-copy .eyebrow { font-size: .72rem; font-weight: 900; letter-spacing: .11em; text-transform: uppercase; }
+.section-roster-copy h2 { margin: 0; font-size: 1.65rem; letter-spacing: -.045em; line-height: 1.02; }
+.section-roster-copy p:last-child { margin: 0; color: var(--text-muted); font-size: .92rem; line-height: 1.5; max-width: 24ch; }
+.section-roster-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; width: min(100%, 18rem); margin-inline: auto; }
+.section-roster-meta > div { display: grid; gap: .12rem; min-width: 0; min-height: 4.2rem; padding: .7rem .75rem .65rem; border-radius: 1rem; background: linear-gradient(180deg, var(--surface-subtle), var(--surface-card)); border: 1px solid rgba(32, 56, 109, .06); text-align: center; box-shadow: 0 10px 24px rgba(36, 50, 78, .04); }
+.section-roster-meta strong { color: var(--text-strong); font-size: 1.35rem; font-variant-numeric: tabular-nums; line-height: 1; }
+.section-roster-meta span { color: var(--text-muted); display: block; font-size: .64rem; font-weight: 850; letter-spacing: .08em; line-height: 1.15; text-transform: uppercase; white-space: normal; overflow: visible; }
+.section-roster-footer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; padding: 0 1.2rem 1.2rem; margin-top: auto; }
+.section-open-link { width: 100%; justify-content: center; }
+.section-open-link.secondary { background: var(--surface-subtle); }
 .section-roster-body { display: grid; gap: .8rem; padding: 0 1.2rem 1.2rem; }
 .section-roster-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
 .section-roster-actions > *, .section-roster-actions form > * { width: 100%; }
 .section-roster-actions form { margin: 0; grid-column: 1 / -1; }
 .section-roster-actions .compact { min-height: 2.5rem; justify-content: center; }
-.section-roster-detail { position: relative; display: grid; gap: 1rem; margin-top: 1.1rem; padding: 1.1rem; border: 1px solid var(--border-subtle); border-radius: var(--primitive-radius-xl); background: linear-gradient(180deg, var(--surface-card), var(--surface-subtle)); box-shadow: var(--primitive-shadow-sm); overflow: clip; }
-.section-roster-detail::before { content: ""; position: absolute; inset: 0 auto auto 0; width: 100%; height: .28rem; background: linear-gradient(90deg, var(--primitive-cobalt-500), var(--primitive-cobalt-300)); }
-.section-detail-header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 1rem; align-items: start; padding: 1rem 1.1rem; border: 1px solid var(--primitive-cobalt-100); border-radius: var(--primitive-radius-lg); background: linear-gradient(180deg, rgba(49, 94, 212, .08), var(--surface-card)); }
-.section-detail-kicker { margin: .1rem 0 .4rem; color: var(--action-primary-hover); font-size: .7rem; font-weight: 850; letter-spacing: .12em; text-transform: uppercase; }
-.section-detail-header h2 { margin: .15rem 0 .35rem; font-size: clamp(1.5rem, 2vw, 2rem); letter-spacing: -.04em; }
-.section-detail-header p:last-child { margin: 0; color: var(--text-muted); line-height: 1.55; }
-.section-detail-stats { display: flex; gap: .65rem; flex-wrap: wrap; justify-content: flex-end; }
-.section-detail-stats > div { display: grid; gap: .12rem; min-width: 6.5rem; padding: .75rem .85rem; border-radius: var(--primitive-radius-md); background: var(--surface-subtle); text-align: center; }
-.section-roster-meta .ui-icon, .section-detail-stats .ui-icon, .section-open-link .ui-icon, .section-detail-header .ui-icon, .section-roster-lede .ui-icon { width: 1rem; height: 1rem; }
-.section-detail-stats strong { color: var(--text-strong); font-size: 1.25rem; font-variant-numeric: tabular-nums; line-height: 1; }
-.section-detail-stats span { color: var(--text-muted); font-size: .66rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.section-students-view { display: grid; gap: 1rem; margin-top: 1.1rem; }
+.section-students-view-header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 1rem; align-items: start; padding: 1rem 1.1rem; border: 1px solid var(--border-subtle); border-radius: var(--primitive-radius-xl); background: linear-gradient(180deg, var(--surface-card), var(--surface-subtle)); box-shadow: var(--primitive-shadow-sm); }
+.section-students-view-copy { display: grid; gap: .25rem; }
+.section-students-view-copy h2 { margin: .15rem 0 .35rem; font-size: clamp(1.5rem, 2vw, 2rem); letter-spacing: -.04em; }
+.section-students-view-copy p:last-child { margin: 0; color: var(--text-muted); line-height: 1.55; max-width: 48ch; }
+.section-students-view-stats { display: flex; gap: .65rem; flex-wrap: wrap; justify-content: flex-end; }
+.section-students-view-stats > div { display: grid; gap: .12rem; min-width: 6.5rem; padding: .75rem .85rem; border-radius: var(--primitive-radius-md); background: var(--surface-subtle); text-align: center; }
+.section-students-view .roster-table th, .section-students-view .roster-table td { vertical-align: top; }
+.section-students-view .roster-actions-cell { padding-top: .95rem; }
+.section-students-view .roster-row-actions { display: grid; grid-template-columns: 1fr; gap: .4rem; width: 100%; }
+.section-students-view .roster-row-actions .compact { width: 100%; }
+.section-students-view .roster-identity { align-items: flex-start; }
+.section-students-view .roster-identity-copy { gap: .22rem; }
+.section-students-view .roster-meta-line { gap: .12rem; }
+.section-students-view .roster-email { white-space: normal; overflow: visible; text-overflow: clip; }
+.section-students-view .roster-section-pill { justify-content: flex-start; }
+.section-students-view .roster-account-state, .section-students-view .roster-status-dot { min-height: 2.25rem; align-items: center; }
 .section-roster-lede { display: grid; gap: .2rem; padding: .9rem 1rem; border: 1px solid var(--border-subtle); border-radius: var(--primitive-radius-md); background: var(--surface-card); }
 .section-roster-lede strong { color: var(--text-strong); font-size: .8rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
 .section-roster-lede p { margin: 0; color: var(--text-muted); line-height: 1.5; }
@@ -330,12 +346,6 @@ td { border-color: var(--primitive-slate-100); }
 .checkbox-cell { text-align: center; }
 .checkbox-cell input { width: 1rem; height: 1rem; }
 .checkbox-heading { width: 4rem; }
-.section-student-table th:nth-child(1) { width: 4%; }
-.section-student-table th:nth-child(2) { width: 30%; }
-.section-student-table th:nth-child(3) { width: 18%; }
-.section-student-table th:nth-child(4) { width: 10%; }
-.section-student-table th:nth-child(5) { width: 14%; }
-.section-student-table th:nth-child(6) { width: 24%; }
 .roster-empty-state { margin: .25rem 0 0; }
 .section-credential-notice, .section-import-summary { margin: 0; }
 
@@ -412,7 +422,7 @@ td { border-color: var(--primitive-slate-100); }
   .roster-row-actions .compact { min-height: 2.75rem; }
   .roster-row-actions form { width: 100%; }
   .report-link { font-size: .76rem; }
-  .section-roster-meta { flex-direction: column; }
+  .section-roster-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* Mobile: dedicated app bar, five-item bottom navigation, and modal More sheet. */
@@ -462,16 +472,16 @@ td { border-color: var(--primitive-slate-100); }
   .distribution-list > div { grid-template-columns: minmax(5.5rem, .8fr) minmax(5rem, 1.4fr) 1.5rem; gap: .5rem; }
   .section-title-row { align-items: start; }
   .section-roster-stack { grid-template-columns: 1fr; }
-  .section-roster-summary { grid-template-columns: 1fr; grid-template-areas: "copy" "meta" "action"; gap: .7rem; padding: .95rem 1rem; }
+  .section-roster-summary { gap: .7rem; padding: .95rem 1rem .75rem; }
   .section-roster-copy { gap: .25rem; }
-  .section-roster-copy h2 { font-size: 1.05rem; line-height: 1.15; }
-  .section-roster-meta { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); justify-content: stretch; gap: .5rem; }
-  .section-roster-meta > div { min-width: 0; padding: .65rem .7rem; }
-  .section-open-link { justify-self: stretch; width: 100%; }
-  .section-detail-header { grid-template-columns: 1fr; }
-  .section-detail-kicker { margin-top: 0; }
-  .section-detail-stats { justify-content: stretch; }
-  .section-detail-stats > div { flex: 1 1 9rem; }
+  .section-roster-copy h2 { font-size: 1.12rem; line-height: 1.15; }
+  .section-roster-copy p:last-child { max-width: none; }
+  .section-roster-meta { width: 100%; justify-content: center; gap: .5rem; }
+  .section-roster-meta > div { width: auto; min-width: 0; padding: .65rem .7rem; }
+  .section-roster-footer { grid-template-columns: 1fr; padding: 0 .95rem .95rem; }
+  .section-open-link { width: 100%; }
+  .section-students-view-header { grid-template-columns: 1fr; }
+  .section-students-view-stats { justify-content: stretch; }
   .section-roster-panel { padding: .85rem; }
   .section-bulk-toolbar { grid-template-columns: 1fr 1fr; }
   .section-bulk-toolbar > .bulk-select-all { grid-column: 1 / -1; }
@@ -480,6 +490,7 @@ td { border-color: var(--primitive-slate-100); }
   .section-bulk-toolbar > .primary-btn,
   .section-bulk-toolbar > .bulk-selection-count { grid-column: 1 / -1; }
   .section-bulk-toolbar > .bulk-selection-count { justify-self: start; }
+  .section-students-view .roster-row-actions { grid-template-columns: 1fr; }
   .result-filter-grid { grid-template-columns: 1fr; }
   .result-filter-grid .filter-search-wide, .result-filter-grid .filter-actions { grid-column: auto; }
   .filter-actions { display: grid; grid-template-columns: 1fr 1fr; }
@@ -508,7 +519,7 @@ td { border-color: var(--primitive-slate-100); }
   .roster-table tbody th, .roster-table .roster-notes, .roster-table .roster-actions-cell { grid-column: auto; }
   .roster-table tbody th { grid-column: 1 / -1; }
   .roster-table .roster-actions-cell { grid-column: 1 / -1; }
-  .section-student-table th:nth-child(1), .section-student-table th:nth-child(2), .section-student-table th:nth-child(3), .section-student-table th:nth-child(4), .section-student-table th:nth-child(5), .section-student-table th:nth-child(6) { width: auto; }
+  .section-students-view .roster-table th:nth-child(1), .section-students-view .roster-table th:nth-child(2), .section-students-view .roster-table th:nth-child(3), .section-students-view .roster-table th:nth-child(4), .section-students-view .roster-table th:nth-child(5), .section-students-view .roster-table th:nth-child(6) { width: auto; }
   .roster-row-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
   .roster-row-actions > *, .roster-row-actions button { width: 100%; }
   .roster-row-actions form:last-child { grid-column: 1 / -1; }
@@ -526,10 +537,13 @@ td { border-color: var(--primitive-slate-100); }
   .card-heading, .section-title-row { display: grid; }
   .roster-table th, .roster-table td { grid-template-columns: 1fr; gap: .35rem; }
   .roster-table .account-state, .roster-table .status-dot { justify-content: flex-start; }
+  .section-students-view-header { grid-template-columns: 1fr; }
+  .section-students-view-stats { justify-content: stretch; }
+  .section-students-view-stats > div { flex: 1 1 9rem; }
+  .section-roster-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .roster-table tbody th { padding-top: .8rem; padding-bottom: .72rem; }
   .roster-row-actions { grid-template-columns: 1fr; }
   .roster-row-actions form:last-child { grid-column: auto; }
-  .section-roster-meta { flex-direction: column; }
   .integrity-review-stats { grid-template-columns: 1fr 1fr; }
   .integrity-event-card { grid-template-columns: 2rem minmax(0, 1fr); gap: .65rem; padding: .8rem; }
   .integrity-event-icon { width: 2rem; height: 2rem; border-width: 3px; border-radius: .65rem; }

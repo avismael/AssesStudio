@@ -1,6 +1,6 @@
 # Assessment Studio
 
-Plataforma institucional bilingüe de evaluaciones construida con Flask, Jinja y PostgreSQL. Permite múltiples cuentas docentes, catálogo por docente, padrón institucional administrado por el admin, bancos de preguntas reutilizables, exámenes con versiones, asignaciones por sección, un intento estable por estudiante, calificación automática, listening, revisión de integridad, penalizaciones manuales auditables y exportaciones PDF/CSV/XLSX.
+Plataforma institucional bilingüe de evaluaciones construida con Flask, Jinja y PostgreSQL. Permite múltiples cuentas docentes, catálogo por docente, padrón institucional administrado por el admin, bancos de preguntas reutilizables, exámenes con versiones, asignaciones por sección, un intento estable por estudiante, calificación automática, listening, revisión de integridad, penalizaciones manuales auditables y exportaciones PDF/CSV/XLSX. Los exportes imprimibles de exámenes (PDF/Markdown/DOCX) barajan determinísticamente opciones/ítems para no filtrar la clave por orden.
 
 ## Estado actual
 

@@ -99,7 +99,7 @@ Todas usan `teacher_required`; `exam_row()` exige `exams.teacher_id=current_teac
 | GET | `/teacher/exams` | Lista current teacher | - | Exam manager |
 | POST | `/teacher/exams/new` | Inserta current teacher | Sí | Crear exam + version A |
 | GET | `/teacher/exams/<int:exam_id>` | Exam owner | - | Detalle |
-| GET | `/teacher/exams/<int:exam_id>/pdf` | Exam owner | - | PDF formal con todas las versiones activas |
+| GET | `/teacher/exams/<int:exam_id>/pdf` | Exam owner | - | PDF formal con todas las versiones activas; baraja de forma determinística las opciones/ítems para no exponer el orden base |
 | POST | `/teacher/exams/<int:exam_id>/edit` | Exam owner | Sí | Editar |
 | POST | `/teacher/exams/<int:exam_id>/publish` | Exam owner | Sí | Publicar/ocultar |
 | POST | `/teacher/exams/<int:exam_id>/archive` | Exam owner | Sí | Archivar y desactivar assignments |

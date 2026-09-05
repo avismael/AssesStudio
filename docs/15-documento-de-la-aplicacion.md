@@ -215,6 +215,8 @@ flowchart LR
     Query --> PDF[Reporte PDF del intento]
 ```
 
+Los exportes imprimibles de exámenes preservan el snapshot, pero barajan de forma determinística opciones/ítems.
+
 ## Ciclo de vida del intento
 
 ```mermaid

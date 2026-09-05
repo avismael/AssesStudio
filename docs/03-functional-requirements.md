@@ -72,6 +72,8 @@ Al iniciar un intento, `ui_language` queda en snapshot. El examen y su PDF usan 
 | `order` | Marcada como tocada y permutación completa sin duplicados | Lista idéntica al orden correcto |
 | `matching` | Todos los lados, opciones permitidas y sin repetir | Mapa idéntico a `answer` |
 
+Los exports imprimibles (`PDF`, `Markdown`, `DOCX`) preservan el contenido del snapshot, pero barajan de forma determinística las opciones/ítems de cada pregunta para no revelar el orden original.
+
 ## Requisitos no funcionales
 
 | ID | Requisito | Estado/medida actual |
