@@ -221,25 +221,18 @@ td { border-color: var(--primitive-slate-100); }
 
 /* Responsive roster tables: semantic tables on desktop, labeled records below desktop. */
 .roster-data-section { display: grid; min-width: 0; gap: .8rem; }
-.roster-table-frame { max-width: 100%; overflow: auto; border: 1px solid var(--border-subtle); border-radius: var(--card-radius); background: var(--surface-card); scrollbar-width: thin; }
-.roster-table { width: 100%; border-collapse: separate; border-spacing: 0 .55rem; table-layout: fixed; }
+.roster-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .roster-table th, .roster-table td { padding: .8rem .85rem; border-bottom: 1px solid var(--primitive-slate-100); text-align: left; vertical-align: middle; overflow-wrap: anywhere; }
 .roster-table thead th { padding-block: .7rem; background: var(--surface-subtle); color: var(--text-muted); font-size: .64rem; font-weight: 850; letter-spacing: .075em; text-transform: uppercase; }
-.roster-table tbody th { background: var(--surface-card); color: var(--text-body); font-weight: 700; letter-spacing: normal; }
+.roster-table tbody th { background: transparent; color: var(--text-body); font-weight: 700; letter-spacing: normal; }
 .roster-table tbody tr:last-child > * { border-bottom: 1px solid var(--primitive-slate-100); }
 .roster-table tbody tr { transition: transform var(--primitive-duration) var(--primitive-ease), background-color var(--primitive-duration) var(--primitive-ease), box-shadow var(--primitive-duration) var(--primitive-ease); }
 .roster-table tbody tr:hover { background: rgba(237, 243, 255, .42); transform: translateY(-1px); }
 .roster-table tbody tr.is-inactive { background: var(--surface-subtle); color: var(--text-muted); }
-.roster-table tbody tr > * { background: var(--surface-card); }
-.roster-table tbody tr.is-inactive > * { background: var(--surface-subtle); }
-.roster-table tbody tr > *:first-child { border-left: 1px solid var(--primitive-slate-100); border-top-left-radius: 16px; border-bottom-left-radius: 16px; }
-.roster-table tbody tr > *:last-child { border-right: 1px solid var(--primitive-slate-100); border-top-right-radius: 16px; border-bottom-right-radius: 16px; }
+.roster-table tbody tr > * { background: transparent; }
+.roster-table tbody tr.is-inactive > * { background: transparent; }
 .roster-table tbody tr.is-inactive:hover { background: var(--surface-subtle); }
 .roster-table tbody tr.is-inactive .roster-avatar { filter: grayscale(.7); opacity: .72; }
-.sections-table th:nth-child(1) { width: 22%; }
-.sections-table th:nth-child(2) { width: 38%; }
-.sections-table th:nth-child(3), .sections-table th:nth-child(4) { width: 10%; }
-.sections-table th:nth-child(5) { width: 20%; }
 .students-table th:nth-child(1) { width: 21%; }
 .students-table th:nth-child(2) { width: 11%; }
 .students-table th:nth-child(3) { width: 10%; }
@@ -275,6 +268,13 @@ td { border-color: var(--primitive-slate-100); }
 .roster-row-actions .compact { min-height: 2.25rem; padding-inline: .65rem; font-size: .7rem; }
 .report-link { display: inline-flex; align-items: center; gap: .3rem; margin-top: .35rem; color: var(--action-primary-hover); font-size: .72rem; font-weight: 850; text-decoration: none; }
 .report-link:hover { text-decoration: underline; }
+.breadcrumbs { margin: 0 0 .6rem; }
+.breadcrumbs-list { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; list-style: none; margin: 0; padding: 0; color: var(--text-muted); font-size: .78rem; font-weight: 650; }
+.breadcrumbs-item { display: inline-flex; align-items: center; gap: .45rem; min-width: 0; }
+.breadcrumbs-item:not(:last-child)::after { content: "/"; color: var(--text-muted); opacity: .6; }
+.breadcrumbs a { color: inherit; text-decoration: none; }
+.breadcrumbs a:hover { text-decoration: underline; }
+.breadcrumbs [aria-current="page"] { color: var(--text-strong); }
 .report-shell { align-items: start; }
 .report-card { width: min(1080px, 100%); }
 .report-heading { align-items: flex-start; }
@@ -321,19 +321,31 @@ td { border-color: var(--primitive-slate-100); }
 .section-students-view-stats { display: flex; gap: .65rem; flex-wrap: wrap; justify-content: flex-end; }
 .section-students-view-stats > div { display: grid; gap: .12rem; min-width: 6.5rem; padding: .75rem .85rem; border-radius: var(--primitive-radius-md); background: var(--surface-subtle); text-align: center; }
 .section-students-view .roster-table th, .section-students-view .roster-table td { vertical-align: top; }
+.section-students-view .roster-table th, .section-students-view .roster-table td { min-width: 0; }
+.section-students-view .roster-table th:nth-child(1), .section-students-view .roster-table td:nth-child(1) { width: 3rem; }
+.section-students-view .roster-table th:nth-child(2), .section-students-view .roster-table td:nth-child(2) { width: 27%; }
+.section-students-view .roster-table th:nth-child(3), .section-students-view .roster-table td:nth-child(3) { width: 18%; }
+.section-students-view .roster-table th:nth-child(4), .section-students-view .roster-table td:nth-child(4) { width: 12%; }
+.section-students-view .roster-table th:nth-child(5), .section-students-view .roster-table td:nth-child(5) { width: 4rem; }
+.section-students-view .roster-table th:nth-child(6), .section-students-view .roster-table td:nth-child(6) { width: 22%; }
 .section-students-view .roster-actions-cell { padding-top: .95rem; }
-.section-students-view .roster-row-actions { display: grid; grid-template-columns: 1fr; gap: .4rem; width: 100%; }
-.section-students-view .roster-row-actions .compact { width: 100%; }
+.section-students-view .roster-row-actions { display: flex; align-items: center; justify-content: flex-start; gap: .35rem; flex-wrap: wrap; width: 100%; }
+.section-students-view .roster-row-actions form { width: auto; }
+.section-students-view .roster-row-actions .roster-action { width: 2.3rem; min-width: 2.3rem; height: 2.3rem; min-height: 2.3rem; padding: 0; }
 .section-students-view .roster-identity { align-items: flex-start; }
 .section-students-view .roster-identity-copy { gap: .22rem; }
 .section-students-view .roster-meta-line { gap: .12rem; }
 .section-students-view .roster-email { white-space: normal; overflow: visible; text-overflow: clip; }
 .section-students-view .roster-section-pill { justify-content: flex-start; }
 .section-students-view .roster-account-state, .section-students-view .roster-status-dot { min-height: 2.25rem; align-items: center; }
+.section-students-view .roster-notes { min-width: 0; }
+.section-students-view .roster-notes { display: grid; place-items: center; }
+.section-students-view .roster-note-action { width: 2.3rem; min-width: 2.3rem; height: 2.3rem; min-height: 2.3rem; padding: 0; }
+.section-students-view .roster-actions-cell { min-width: 0; }
 .section-roster-lede { display: grid; gap: .2rem; padding: .9rem 1rem; border: 1px solid var(--border-subtle); border-radius: var(--primitive-radius-md); background: var(--surface-card); }
 .section-roster-lede strong { color: var(--text-strong); font-size: .8rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
 .section-roster-lede p { margin: 0; color: var(--text-muted); line-height: 1.5; }
-.section-roster-panel { padding: 1rem; border: 1px solid var(--border-subtle); border-radius: var(--primitive-radius-lg); background: var(--surface-card); }
+.section-roster-panel { padding: 0; border: 0; border-radius: 0; background: transparent; }
 .section-report-link { justify-self: end; }
 .section-bulk-form { display: grid; gap: .75rem; }
 .section-bulk-toolbar { display: grid; grid-template-columns: auto minmax(180px, .9fr) minmax(190px, 1fr) auto auto; gap: .6rem; align-items: end; padding: .85rem .9rem; border: 1px solid var(--border-subtle); border-radius: var(--primitive-radius-lg); background: var(--surface-subtle); }
@@ -398,7 +410,6 @@ td { border-color: var(--primitive-slate-100); }
 
 @media (max-width: 1119px) {
   .integrity-review-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .roster-table-frame { overflow: visible; border: 0; border-radius: 0; background: transparent; }
   .roster-table, .roster-table tbody { display: block; width: 100%; }
   .roster-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
   .roster-table tbody { display: grid; gap: .75rem; }
@@ -482,7 +493,6 @@ td { border-color: var(--primitive-slate-100); }
   .section-open-link { width: 100%; }
   .section-students-view-header { grid-template-columns: 1fr; }
   .section-students-view-stats { justify-content: stretch; }
-  .section-roster-panel { padding: .85rem; }
   .section-bulk-toolbar { grid-template-columns: 1fr 1fr; }
   .section-bulk-toolbar > .bulk-select-all { grid-column: 1 / -1; }
   .section-bulk-toolbar > .bulk-action-field,
@@ -490,7 +500,8 @@ td { border-color: var(--primitive-slate-100); }
   .section-bulk-toolbar > .primary-btn,
   .section-bulk-toolbar > .bulk-selection-count { grid-column: 1 / -1; }
   .section-bulk-toolbar > .bulk-selection-count { justify-self: start; }
-  .section-students-view .roster-row-actions { grid-template-columns: 1fr; }
+  .section-students-view .roster-row-actions { gap: .3rem; }
+  .section-students-view .roster-row-actions .roster-action { width: 2.5rem; min-width: 2.5rem; height: 2.5rem; min-height: 2.5rem; }
   .result-filter-grid { grid-template-columns: 1fr; }
   .result-filter-grid .filter-search-wide, .result-filter-grid .filter-actions { grid-column: auto; }
   .filter-actions { display: grid; grid-template-columns: 1fr 1fr; }
@@ -520,9 +531,8 @@ td { border-color: var(--primitive-slate-100); }
   .roster-table tbody th { grid-column: 1 / -1; }
   .roster-table .roster-actions-cell { grid-column: 1 / -1; }
   .section-students-view .roster-table th:nth-child(1), .section-students-view .roster-table th:nth-child(2), .section-students-view .roster-table th:nth-child(3), .section-students-view .roster-table th:nth-child(4), .section-students-view .roster-table th:nth-child(5), .section-students-view .roster-table th:nth-child(6) { width: auto; }
-  .roster-row-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
-  .roster-row-actions > *, .roster-row-actions button { width: 100%; }
-  .roster-row-actions form:last-child { grid-column: 1 / -1; }
+  .roster-row-actions { display: flex; flex-wrap: wrap; width: 100%; }
+  .roster-row-actions form:last-child { grid-column: auto; }
   .section-roster-summary { padding: 1rem; }
   .section-roster-body { padding: 0 1rem 1rem; }
   .section-bulk-toolbar { grid-template-columns: 1fr; }
@@ -542,7 +552,7 @@ td { border-color: var(--primitive-slate-100); }
   .section-students-view-stats > div { flex: 1 1 9rem; }
   .section-roster-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .roster-table tbody th { padding-top: .8rem; padding-bottom: .72rem; }
-  .roster-row-actions { grid-template-columns: 1fr; }
+  .roster-row-actions { display: flex; flex-wrap: wrap; }
   .roster-row-actions form:last-child { grid-column: auto; }
   .integrity-review-stats { grid-template-columns: 1fr 1fr; }
   .integrity-event-card { grid-template-columns: 2rem minmax(0, 1fr); gap: .65rem; padding: .8rem; }

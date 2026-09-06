@@ -281,6 +281,54 @@ def test_reports_module_renders_section_first_flow_and_formal_documents():
     assert 'Imprimir' in student_html
 
 
+def test_teacher_students_routes_and_breadcrumbs_render():
+    endpoints = {
+        'teacher_students',
+        'teacher_students_section',
+        'teacher_students_import_template',
+        'teacher_students_import',
+        'teacher_section_new',
+        'teacher_section_edit',
+        'teacher_section_archive',
+        'teacher_students_bulk',
+        'teacher_student_new',
+        'teacher_student_edit',
+        'teacher_student_password',
+        'teacher_student_toggle',
+        'teacher_student_archive',
+    }
+    endpoints.update(
+        {
+            'teacher_exams',
+            'teacher_exam_new',
+            'teacher_exam_detail',
+            'teacher_exam_pdf',
+            'teacher_exam_markdown',
+            'teacher_exam_docx',
+            'teacher_exam_edit',
+            'teacher_exam_publish',
+            'teacher_exam_archive',
+            'teacher_exam_version_new',
+            'teacher_exam_version_edit',
+            'teacher_exam_version_duplicate',
+            'teacher_exam_version_archive',
+            'teacher_exam_version_restore',
+            'teacher_exam_version_questions',
+            'teacher_exam_version_questions_save',
+            'teacher_exam_assign',
+            'teacher_exam_assignment_remove',
+        }
+    )
+    assert endpoints.issubset(app.app.view_functions)
+
+    client = _admin_client()
+    students = client.get('/teacher/students')
+    reports = client.get('/teacher/reports')
+    assert students.status_code == 200 and reports.status_code == 200
+    assert 'class="breadcrumbs"' in students.get_data(as_text=True)
+    assert 'class="breadcrumbs"' in reports.get_data(as_text=True)
+
+
 def test_exam_edit_can_change_subject_before_results():
     with app.get_db() as conn:
         stamp = app.now_iso()
@@ -573,11 +621,16 @@ def test_order_question_editor_renders_without_dict_items_conflict():
 
 def test_version_archive_and_restore_routes_exist():
     routes = {rule.rule for rule in app.app.url_map.iter_rules()}
+    assert '/teacher/catalog' in routes
+    assert '/teacher/catalog/subject/<int:subject_id>' in routes
     assert '/teacher/exams/<int:exam_id>/versions/<int:version_id>/archive' in routes
     assert '/teacher/exams/<int:exam_id>/versions/<int:version_id>/restore' in routes
     assert '/teacher/exams/<int:exam_id>/pdf' in routes
     assert '/teacher/exams/<int:exam_id>/markdown' in routes
     assert '/teacher/exams/<int:exam_id>/docx' in routes
+    assert '/teacher/users' in routes
+    assert '/teacher/setup' in routes
+    assert '/teacher/account/password' in routes
     assert '/api/listening-script/<question_id>' in routes
 
 
@@ -723,14 +776,13 @@ def test_teacher_roster_renders_semantic_tables_and_preserves_row_actions():
     response = _admin_client().get('/teacher/students')
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert html.count('data-roster-table="sections"') == 1
+    assert 'data-roster-table="sections"' not in html
     assert html.count('data-roster-table="students"') == 1
-    for dataset in ('sections', 'students'):
-        table = re.search(rf'<table[^>]+data-roster-table="{dataset}".*?</table>', html, re.S)
-        assert table is not None
-        assert '<thead>' in table.group(0) and '<tbody>' in table.group(0)
-        assert 'scope="col"' in table.group(0) and 'scope="row"' in table.group(0)
-        assert 'data-label=' in table.group(0)
+    table = re.search(r'<table[^>]+data-roster-table="students".*?</table>', html, re.S)
+    assert table is not None
+    assert '<thead>' in table.group(0) and '<tbody>' in table.group(0)
+    assert 'scope="col"' in table.group(0) and 'scope="row"' in table.group(0)
+    assert 'data-label=' in table.group(0)
 
     section_row = re.search(r'<tr data-section-row="913".*?</tr>', html, re.S)
     student_row = re.search(r'<tr[^>]+data-student-row="913".*?</tr>', html, re.S)
@@ -1353,7 +1405,7 @@ def test_integrity_event_details_render_for_owner_teacher_only():
 
 def test_exam_js_has_central_no_skip_guard_and_order_touch_marker():
     source = (Path(app.__file__).parent / 'static/js/exam.js').read_text(encoding='utf-8')
-    template = (Path(app.__file__).parent / 'templates/exam.html').read_text(encoding='utf-8')
+    template = (Path(app.__file__).parent / 'templates/exam/index.html').read_text(encoding='utf-8')
     assert 'function navigateTo(index)' in source
     assert "nextBtn.addEventListener('click', () => navigateTo(current + 1))" in source
     assert "dot.addEventListener('click', () => navigateTo(i))" in source

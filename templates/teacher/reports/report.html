@@ -1,11 +1,26 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
+{% from "_breadcrumbs.html" import breadcrumbs with context %}
 {% block title %}{{ report_title }}{% endblock %}
 {% block body %}
 <main class="teacher-shell report-shell">
   <div class="teacher-shell-grid">
     {% set active_page = "reports" %}{% include "_teacher_nav.html" %}
     <div class="teacher-workspace">
+      {% if mode == 'subject' %}
+      {{ breadcrumbs([
+        {'label': t('Padrón docente'), 'url': url_for('teacher')},
+        {'label': t('Informes docentes'), 'url': url_for('teacher_reports')},
+        {'label': section['name'], 'url': url_for('teacher_section_report', section_id=section['id'])},
+        {'label': subject['name']}
+      ]) }}
+      {% else %}
+      {{ breadcrumbs([
+        {'label': t('Padrón docente'), 'url': url_for('teacher')},
+        {'label': t('Informes docentes'), 'url': url_for('teacher_reports')},
+        {'label': student['full_name']}
+      ]) }}
+      {% endif %}
       <section class="result-card report-card">
         <div class="result-heading report-heading">
           <div>

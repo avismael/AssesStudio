@@ -18,6 +18,7 @@ Esta carpeta describe el producto realmente implementado. Las etiquetas **Implem
 | Arquitectura y seguridad | [Arquitectura](05-architecture.md) -> [Datos](06-data-model.md) -> [Seguridad](07-security-privacy.md) -> [ADRs](13-adrs.md) |
 | Desarrollo y QA | [Guía de desarrollo](08-development-guide.md) -> [Calidad](09-quality-strategy.md) -> [Referencia de rutas](11-api-route-reference.md) |
 | Operaciones | [Runbook](10-operations-runbook.md) -> [Diagramas](12-diagrams.md) -> [Seguridad](07-security-privacy.md) |
+| Paquete documental premium | [16 - Product book](16-product-book.md) -> [17 - Casos de uso](17-use-cases.md) -> [18 - Diagramas UML](18-uml-diagrams.md) -> [19 - ER y modelo de datos](19-erd.md) |
 | Usuarios finales | [Manuales por rol e importaciones](../userdirections/README.md) |
 | Documento maestro | [Documento de la aplicación](15-documento-de-la-aplicacion.md) -> [Manuales](../userdirections/README.md) |
 
@@ -39,6 +40,10 @@ Esta carpeta describe el producto realmente implementado. Las etiquetas **Implem
 14. [13 - Registros de decisiones arquitectónicas](13-adrs.md)
 15. [14 - Glosario, gobierno y roadmap](14-glossary-governance-roadmap.md)
 16. [15 - Documento maestro de la aplicación](15-documento-de-la-aplicacion.md)
+17. [16 - Product book](16-product-book.md)
+18. [17 - Casos de uso](17-use-cases.md)
+19. [18 - Diagramas UML](18-uml-diagrams.md)
+20. [19 - ER y modelo de datos](19-erd.md)
 
 Los procedimientos de uso están en [Manuales de usuario](../userdirections/README.md), sin duplicar la referencia técnica. También son normativos [AGENTS.md](../AGENTS.md), para invariantes de modificación, y [README.md](../README.md), como entrada operativa breve. Los changelogs históricos se enlazan desde el [índice de cambios](14-glossary-governance-roadmap.md#índice-de-cambios).
 
@@ -58,6 +63,7 @@ Los procedimientos de uso están en [Manuales de usuario](../userdirections/READ
 | Operaciones | [10](10-operations-runbook.md) | [07](07-security-privacy.md) |
 | Rutas, configuración y referencia | [11](11-api-route-reference.md), [14](14-glossary-governance-roadmap.md) | [08](08-development-guide.md) |
 | Documento maestro de la aplicación | [15](15-documento-de-la-aplicacion.md) | [05](05-architecture.md), [06](06-data-model.md), [11](11-api-route-reference.md), [12](12-diagrams.md), [../userdirections/README.md](../userdirections/README.md) |
+| Paquete documental premium | [16](16-product-book.md), [17](17-use-cases.md), [18](18-uml-diagrams.md), [19](19-erd.md) | [05](05-architecture.md), [06](06-data-model.md), [11](11-api-route-reference.md), [12](12-diagrams.md) |
 
 ## Convención de estado
 

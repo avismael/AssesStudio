@@ -1,11 +1,17 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
+{% from "_breadcrumbs.html" import breadcrumbs with context %}
 {% block title %}{{ section['name'] }} · Informes{% endblock %}
 {% block body %}
 <main class="teacher-shell report-shell">
   <div class="teacher-shell-grid">
     {% set active_page = "reports" %}{% include "_teacher_nav.html" %}
     <div class="teacher-workspace">
+      {{ breadcrumbs([
+        {'label': t('Padrón docente'), 'url': url_for('teacher')},
+        {'label': t('Informes docentes'), 'url': url_for('teacher_reports')},
+        {'label': section['name']}
+      ]) }}
       <header class="teacher-header">
         <div>
           <p class="eyebrow">{{ icon('chart-bar') }}Módulo de informes</p>

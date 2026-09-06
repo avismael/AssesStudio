@@ -120,6 +120,7 @@ La estrategia, matriz manual y gates están en [docs/09-quality-strategy.md](doc
 
 - [Manuales de usuario y ejemplos de importación](userdirections/README.md)
 - [Documento maestro de la aplicación](docs/15-documento-de-la-aplicacion.md)
+- [Paquete documental premium: 16-19](docs/16-product-book.md) — [17](docs/17-use-cases.md), [18](docs/18-uml-diagrams.md), [19](docs/19-erd.md)
 - [Resumen ejecutivo](docs/00-executive-summary.md)
 - [Producto, negocio y requisitos](docs/01-product-and-business.md)
 - [Arquitectura y datos](docs/05-architecture.md)
