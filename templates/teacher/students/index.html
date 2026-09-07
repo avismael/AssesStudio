@@ -23,15 +23,158 @@
 
 {% macro student_actions(student) -%}
 <div class="roster-row-actions">
-  <button class="icon-only ghost-btn roster-action" type="button" data-open-student-modal data-id="{{ student['id'] }}" data-url="{{ url_for('teacher_student_edit', student_id=student['id']) }}" data-name="{{ student['full_name']|e }}" data-email="{{ (student['email'] or '')|e }}" data-section-id="{{ student['section_id'] }}" data-code="{{ (student['student_code'] or '')|e }}" data-notes="{{ (student['notes'] or '')|e }}" data-active="{{ 1 if student['is_active'] else 0 }}" aria-label="{{ t('Editar') }}" title="{{ t('Editar') }}">{{ icon('pencil-simple') }}</button>
-  <button class="icon-only ghost-btn roster-action" type="button" data-open-password-modal data-id="{{ student['id'] }}" data-url="{{ url_for('teacher_student_password', student_id=student['id']) }}" data-name="{{ student['full_name']|e }}" data-email="{{ (student['email'] or '')|e }}" {% if not student['email'] %}disabled{% endif %} aria-label="{{ t('Restablecer contraseña') }}" title="{{ t('Restablecer contraseña') }}">{{ icon('key') }}</button>
+  <button class="ghost-btn roster-action" type="button" data-role="edit" data-open-student-modal data-id="{{ student['id'] }}" data-url="{{ url_for('teacher_student_edit', student_id=student['id']) }}" data-name="{{ student['full_name']|e }}" data-email="{{ (student['email'] or '')|e }}" data-section-id="{{ student['section_id'] }}" data-code="{{ (student['student_code'] or '')|e }}" data-notes="{{ (student['notes'] or '')|e }}" data-active="{{ 1 if student['is_active'] else 0 }}" aria-label="{{ t('Editar') }}" title="{{ t('Editar') }}"><span class="roster-action-icon">{{ icon('pencil-simple') }}</span><span class="roster-action-label">{{ t('Editar') }}</span></button>
+  <button class="ghost-btn roster-action" type="button" data-role="password" data-open-password-modal data-id="{{ student['id'] }}" data-url="{{ url_for('teacher_student_password', student_id=student['id']) }}" data-name="{{ student['full_name']|e }}" data-email="{{ (student['email'] or '')|e }}" {% if not student['email'] %}disabled{% endif %} aria-label="{{ t('Restablecer contraseña') }}" title="{{ t('Restablecer contraseña') }}"><span class="roster-action-icon">{{ icon('key') }}</span><span class="roster-action-label">{{ t('Clave') }}</span></button>
   <form method="post" action="{{ url_for('teacher_student_archive', student_id=student['id']) }}" data-confirm data-confirm-title="{{ t('Archivar estudiante') }}" data-confirm-text="{{ t('Esta acción requiere confirmación.') }} {{ t('Los elementos archivados permanecen en los resultados históricos, pero se ocultan de las vistas normales de gestión.') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="return_q" value="{{ filters.q }}">
     <input type="hidden" name="return_section" value="{{ filters.section }}">
-    <button class="icon-only danger-btn roster-action" type="submit" aria-label="{{ t('Archivar') }}" title="{{ t('Archivar') }}">{{ icon('archive') }}</button>
+    <button class="danger-btn roster-action" type="submit" data-role="archive" aria-label="{{ t('Archivar') }}" title="{{ t('Archivar') }}"><span class="roster-action-icon">{{ icon('archive') }}</span><span class="roster-action-label">{{ t('Archivar') }}</span></button>
   </form>
 </div>
+{%- endmacro %}
+
+{% macro student_mobile_card(student) -%}
+<article class="student-card">
+  <header class="student-card__header">
+    <div class="student-card__avatar" aria-hidden="true">{{ student['full_name'][0]|upper }}</div>
+    <div class="student-card__info">
+      <span class="student-card__label">{{ t('Información del estudiante') }}</span>
+      <h3 class="student-card__name">{{ student['full_name'] }}</h3>
+      <p class="student-card__detail">
+        <span class="student-card__detail-label">{{ t('Estudiante ID:') }}</span>
+        <mark class="student-card__badge-id">{{ student['student_code'] or '—' }}</mark>
+      </p>
+      <p class="student-card__detail">
+        <span class="student-card__detail-label">{{ t('Email:') }}</span>
+        {% if student['email'] %}<a href="mailto:{{ student['email'] }}" class="student-card__link">{{ student['email'] }}</a>{% else %}<span class="student-card__link">{{ t('Acceso pendiente') }}</span>{% endif %}
+      </p>
+    </div>
+  </header>
+
+  <section class="student-card__status-group">
+    <div class="student-card__status-item">
+      <span class="student-card__status-label">{{ t('Acceso') }}</span>
+      <span class="student-card__badge student-card__badge--success">{{ icon('check-circle') }}{{ t('Acceso listo') }}</span>
+    </div>
+    <div class="student-card__status-item">
+      <span class="student-card__status-label">{{ t('Estado') }}</span>
+      <span class="student-card__badge student-card__badge--success">{{ icon('user-check') }}{{ t('Activo') }}</span>
+    </div>
+  </section>
+
+  <section class="student-card__notes">
+    <span class="student-card__section-title">{{ t('Notas') }}</span>
+    <a class="student-card__notes-box student-card__notes-link" href="{{ url_for('teacher_student_report', student_id=student['id']) }}" aria-label="{{ t('Ver notas del estudiante') }}" title="{{ t('Ver notas del estudiante') }}">
+      <span class="student-card__notes-icon">{{ icon('file-text') }}</span>
+      <div class="student-card__notes-content">
+        <strong>{{ t('Ver notas') }}</strong>
+        <p>{{ student['notes'] or t('Sin observaciones') }}</p>
+      </div>
+      <span class="student-card__notes-chevron" aria-hidden="true">{{ icon('arrow-right') }}</span>
+    </a>
+  </section>
+
+  <footer class="student-card__footer">
+    <label class="student-card__checkbox-container">
+      <input type="checkbox" class="student-card__checkbox" name="student_ids" value="{{ student['id'] }}" data-section-checkbox form="sectionBulkForm">
+      <span class="student-card__checkbox-label">{{ t('Seleccionar Estudiante') }}</span>
+    </label>
+
+    <div class="student-card__actions">
+      <button class="student-card__btn student-card__btn--primary" type="button" data-open-student-modal data-id="{{ student['id'] }}" data-url="{{ url_for('teacher_student_edit', student_id=student['id']) }}" data-name="{{ student['full_name']|e }}" data-email="{{ (student['email'] or '')|e }}" data-section-id="{{ student['section_id'] }}" data-code="{{ (student['student_code'] or '')|e }}" data-notes="{{ (student['notes'] or '')|e }}" data-active="{{ 1 if student['is_active'] else 0 }}">
+        {{ icon('pencil-simple') }}{{ t('Editar') }}
+      </button>
+      <form method="post" action="{{ url_for('teacher_student_archive', student_id=student['id']) }}" data-confirm data-confirm-title="{{ t('Archivar estudiante') }}" data-confirm-text="{{ t('Esta acción requiere confirmación.') }} {{ t('Los elementos archivados permanecen en los resultados históricos, pero se ocultan de las vistas normales de gestión.') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="return_q" value="{{ filters.q }}">
+        <input type="hidden" name="return_section" value="{{ filters.section }}">
+        <button class="student-card__btn student-card__btn--danger" type="submit">{{ icon('archive') }}{{ t('Archivar') }}</button>
+      </form>
+    </div>
+  </footer>
+</article>
+{%- endmacro %}
+
+{% macro archived_student_card(student) -%}
+<article class="student-card student-card--archived">
+  <header class="student-card__header">
+    <div class="student-card__avatar" aria-hidden="true">{{ student['full_name'][0]|upper }}</div>
+    <div class="student-card__info">
+      <span class="student-card__label">{{ t('Archivado') }}</span>
+      <h3 class="student-card__name">{{ student['full_name'] }}</h3>
+      <p class="student-card__detail">
+        <span class="student-card__detail-label">{{ t('Sección:') }}</span>
+        <span class="student-card__link">{{ student['section_name'] }}</span>
+      </p>
+      <p class="student-card__detail">
+        <span class="student-card__detail-label">{{ t('Estudiante ID:') }}</span>
+        <mark class="student-card__badge-id">{{ student['student_code'] or '—' }}</mark>
+      </p>
+    </div>
+  </header>
+
+  <section class="student-card__notes">
+    <span class="student-card__section-title">{{ t('Notas') }}</span>
+    <a class="student-card__notes-box student-card__notes-link" href="{{ url_for('teacher_student_report', student_id=student['id']) }}" aria-label="{{ t('Ver notas del estudiante') }}" title="{{ t('Ver notas del estudiante') }}">
+      <span class="student-card__notes-icon">{{ icon('file-text') }}</span>
+      <div class="student-card__notes-content">
+        <strong>{{ t('Ver notas') }}</strong>
+        <p>{{ student['notes'] or t('Sin observaciones') }}</p>
+      </div>
+      <span class="student-card__notes-chevron" aria-hidden="true">{{ icon('arrow-right') }}</span>
+    </a>
+  </section>
+
+  <footer class="student-card__footer">
+    <div class="student-card__archived-pill">{{ icon('archive') }}{{ t('Archivado') }}</div>
+    <div class="student-card__actions">
+      <form method="post" action="{{ url_for('teacher_student_restore', student_id=student['id']) }}" data-confirm data-confirm-title="{{ t('Restaurar estudiante') }}" data-confirm-text="{{ t('El estudiante volverá al padrón activo.') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="return_q" value="{{ filters.q }}">
+        <input type="hidden" name="return_section" value="{{ filters.section }}">
+        <button class="student-card__btn student-card__btn--primary" type="submit">{{ icon('arrow-counter-clockwise') }}{{ t('Restaurar') }}</button>
+      </form>
+      <form method="post" action="{{ url_for('teacher_student_delete', student_id=student['id']) }}" data-confirm data-confirm-title="{{ t('Eliminar estudiante definitivamente') }}" data-confirm-text="{{ t('Esta acción es permanente y solo funciona si el estudiante no tiene exámenes ni asignaciones.') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="return_q" value="{{ filters.q }}">
+        <input type="hidden" name="return_section" value="{{ filters.section }}">
+        <button class="student-card__btn student-card__btn--danger" type="submit">{{ icon('trash') }}{{ t('Eliminar definitivamente') }}</button>
+      </form>
+    </div>
+  </footer>
+</article>
+{%- endmacro %}
+
+{% macro archived_section_card(section) -%}
+<article class="section-roster-card is-overview is-archived">
+  <div class="section-roster-summary">
+    <div class="section-roster-copy">
+      <p class="eyebrow">{{ icon('archive') }}{{ t('Archivada') }}</p>
+      <h2>{{ section['name'] }}</h2>
+      <p>{{ section['description'] or t('Todavía no hay descripción.') }}</p>
+    </div>
+    <div class="section-roster-meta">
+      <div><strong>{{ section['student_count'] or 0 }}</strong><span>{{ icon('users-three') }}{{ t('estudiantes') }}</span></div>
+      <div><strong>{{ section['active_count'] or 0 }}</strong><span>{{ icon('check-circle') }}{{ t('activos') }}</span></div>
+    </div>
+  </div>
+  <div class="section-roster-footer">
+    <a class="ghost-btn compact section-open-link" href="{{ url_for('teacher_students_section', section_id=section['id']) }}">{{ icon('arrow-right') }}{{ t('Abrir') }}</a>
+    <form method="post" action="{{ url_for('teacher_section_restore', section_id=section['id']) }}" class="section-restore-form" data-confirm data-confirm-title="{{ t('Restaurar sección') }}" data-confirm-text="{{ t('La sección volverá a aparecer en el padrón activo.') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_q" value="{{ filters.q }}">
+      <input type="hidden" name="return_section" value="{{ filters.section }}">
+      <button class="ghost-btn compact section-open-link secondary" type="submit">{{ icon('arrow-counter-clockwise') }}{{ t('Restaurar sección') }}</button>
+    </form>
+    <form method="post" action="{{ url_for('teacher_section_delete', section_id=section['id']) }}" class="section-restore-form" data-confirm data-confirm-title="{{ t('Eliminar sección definitivamente') }}" data-confirm-text="{{ t('Esta acción es permanente y solo funciona si la sección no tiene estudiantes ni exámenes asociados.') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_q" value="{{ filters.q }}">
+      <input type="hidden" name="return_section" value="{{ filters.section }}">
+      <button class="danger-btn compact section-open-link" type="submit">{{ icon('trash') }}{{ t('Eliminar definitivamente') }}</button>
+    </form>
+  </div>
+</article>
 {%- endmacro %}
 {% block title %}{{ t('Estudiantes') }}{% endblock %}
 {% block body %}
@@ -85,6 +228,28 @@
         {% endfor %}
       </section>
 
+      {% if archived_sections %}
+      <section class="section-archive-panel" aria-label="{{ t('Secciones archivadas') }}">
+        <header class="section-archive-header">
+          <div>
+            <p class="eyebrow">{{ icon('archive') }}{{ t('Archivadas') }}</p>
+            <h2>{{ t('Secciones archivadas') }}</h2>
+            <p>{{ t('Acá podés restaurar secciones que archivaste por error.') }}</p>
+          </div>
+        </header>
+        <section class="archive-help-card" aria-label="{{ t('Ayuda sobre archivado y eliminación de secciones') }}">
+          <div><strong>{{ t('Archivar') }}</strong><span>{{ t('Oculta la sección del padrón activo, pero conserva sus registros.') }}</span></div>
+          <div><strong>{{ t('Restaurar') }}</strong><span>{{ t('Vuelve a mostrar la sección archivada en el padrón activo.') }}</span></div>
+          <div><strong>{{ t('Eliminar definitivamente') }}</strong><span>{{ t('Borra la sección solo si no tiene estudiantes ni exámenes asociados.') }}</span></div>
+        </section>
+        <div class="section-roster-stack section-archive-stack">
+          {% for sec in archived_sections %}
+          {{ archived_section_card(sec) }}
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
       {% endif %}
 
       {% if selected_section %}
@@ -93,9 +258,12 @@
       <section class="section-students-view" aria-label="{{ sec['name'] }}">
         <header class="section-students-view-header">
           <div class="section-students-view-copy">
-            <p class="eyebrow">{{ icon('users-three') }}{{ t('Espacio de la sección') }}</p>
+            <p class="eyebrow">{{ icon('users-three') }}{{ t('Espacio de la sección') }}{% if selected_section_is_archived %} · {{ icon('archive') }}{{ t('Archivada') }}{% endif %}</p>
             <h2>{{ sec['name'] }}</h2>
             <p>{{ sec['description'] or t('Todavía no hay descripción.') }}</p>
+            {% if selected_section_is_archived %}
+            <p>{{ t('Esta sección está archivada. Podés revisar o eliminar sus estudiantes archivados, restaurarla, o borrarla definitivamente si ya no tiene dependencias.') }}</p>
+            {% endif %}
           </div>
           <div class="section-students-view-stats">
             <div><strong>{{ sec['student_count'] or 0 }}</strong><span>{{ icon('users-three') }}{{ t('estudiantes') }}</span></div>
@@ -108,6 +276,12 @@
           <strong>{{ icon('users-three-duotone') }}{{ t('Espacio de trabajo del padrón') }}</strong>
           <p>{{ t('Desde aquí podés editar accesos, restablecer contraseñas, mover estudiantes y ejecutar acciones masivas.') }}</p>
         </div>
+
+        <section class="archive-help-card" aria-label="{{ t('Ayuda sobre archivado y eliminación') }}">
+          <div><strong>{{ t('Archivar') }}</strong><span>{{ t('Oculta el registro del padrón activo, pero lo conserva para recuperar después.') }}</span></div>
+          <div><strong>{{ t('Restaurar') }}</strong><span>{{ t('Vuelve a mostrar el registro archivado en el padrón activo.') }}</span></div>
+          <div><strong>{{ t('Eliminar definitivamente') }}</strong><span>{{ t('Borra el registro solo si no tiene exámenes ni otras dependencias.') }}</span></div>
+        </section>
 
         {% if credentials and credentials.section_id == sec['id'] %}
         <section class="credential-notice section-credential-notice" data-credential-box data-copy-text="{{ t('Estudiante') }}: {{ credentials.name }}&#10;{{ t('Correo') }}: {{ credentials.email }}&#10;{{ t('Contraseña') }}: {{ credentials.password }}">
@@ -158,11 +332,9 @@
         {% endif %}
 
         <div class="section-roster-actions">
+          {% if not selected_section_is_archived %}
           <button class="primary-btn compact" type="button" data-open-modal="studentCreateModal">{{ icon('plus') }}{{ t('Añadir estudiante') }}</button>
-          {% if selected_section %}
           <button class="ghost-btn compact" type="button" data-open-modal="studentImportModal">{{ icon('upload-simple') }}{{ t('Importar estudiantes') }}</button>
-          {% endif %}
-          <a class="ghost-btn compact" href="{{ url_for('teacher_section_report', section_id=sec['id']) }}">{{ icon('file-text') }}{{ t('Reporte de sección') }}</a>
           <button class="ghost-btn compact" type="button" data-open-section-modal data-id="{{ sec['id'] }}" data-url="{{ url_for('teacher_section_edit', section_id=sec['id']) }}" data-name="{{ sec['name']|e }}" data-description="{{ (sec['description'] or '')|e }}">{{ icon('pencil-simple') }}{{ t('Editar sección') }}</button>
           <form method="post" action="{{ url_for('teacher_section_archive', section_id=sec['id']) }}" data-confirm data-confirm-title="{{ t('Archivar sección') }}" data-confirm-text="{{ t('Esta acción requiere confirmación.') }} {{ t('Los elementos archivados permanecen en los resultados históricos, pero se ocultan de las vistas normales de gestión.') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -170,10 +342,25 @@
             <input type="hidden" name="return_section" value="{{ filters.section }}">
             <button class="danger-btn compact" type="submit">{{ icon('archive') }}{{ t('Archivar sección') }}</button>
           </form>
+          {% else %}
+          <form method="post" action="{{ url_for('teacher_section_restore', section_id=sec['id']) }}" data-confirm data-confirm-title="{{ t('Restaurar sección') }}" data-confirm-text="{{ t('La sección volverá a aparecer en el padrón activo.') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="return_q" value="{{ filters.q }}">
+            <input type="hidden" name="return_section" value="{{ filters.section }}">
+            <button class="primary-btn compact" type="submit">{{ icon('arrow-counter-clockwise') }}{{ t('Restaurar sección') }}</button>
+          </form>
+          <form method="post" action="{{ url_for('teacher_section_delete', section_id=sec['id']) }}" data-confirm data-confirm-title="{{ t('Eliminar sección definitivamente') }}" data-confirm-text="{{ t('Esta acción es permanente y solo funciona si la sección no tiene estudiantes ni exámenes asociados.') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="return_q" value="{{ filters.q }}">
+            <input type="hidden" name="return_section" value="{{ filters.section }}">
+            <button class="danger-btn compact" type="submit">{{ icon('trash') }}{{ t('Eliminar definitivamente') }}</button>
+          </form>
+          {% endif %}
+          <a class="ghost-btn compact" href="{{ url_for('teacher_section_report', section_id=sec['id']) }}">{{ icon('file-text') }}{{ t('Reporte de sección') }}</a>
         </div>
 
         {% if section_students %}
-        <form class="section-bulk-form section-roster-panel" method="post" action="{{ url_for('teacher_students_bulk') }}" data-section-bulk-form>
+        <form class="section-bulk-form section-roster-panel" id="sectionBulkForm" method="post" action="{{ url_for('teacher_students_bulk') }}" data-section-bulk-form>
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="section_id" value="{{ sec['id'] }}">
           <input type="hidden" name="return_q" value="{{ filters.q }}">
@@ -225,17 +412,41 @@
                 <th scope="row" data-label="{{ t('Estudiante') }}">{{ student_identity(st) }}</th>
                 <td data-label="{{ t('Acceso') }}">{{ student_access(st) }}</td>
                 <td data-label="{{ t('Estado') }}"><span class="status-dot {{ 'live' if st['is_active'] else 'bank' }}">{{ t('Activo') if st['is_active'] else t('Inactivo') }}</span></td>
-                <td class="roster-notes" data-label="{{ t('Notas') }}"><a class="icon-only ghost-btn roster-note-action" href="{{ url_for('teacher_student_report', student_id=st['id']) }}" aria-label="{{ t('Ver reporte') }}" title="{{ t('Ver reporte') }}">{{ icon('file-text') }}</a></td>
+                <td class="roster-notes" data-label="{{ t('Notas') }}"><a class="ghost-btn roster-note-action" href="{{ url_for('teacher_student_report', student_id=st['id']) }}" aria-label="{{ t('Ver reporte') }}" title="{{ t('Ver reporte') }}"><span class="roster-note-icon">{{ icon('file-text') }}</span><span class="roster-note-copy"><strong>{{ t('Notas del estudiante') }}</strong><span>{{ st['notes'] or t('Sin observaciones') }}</span></span></a></td>
                 <td class="roster-actions-cell" data-label="{{ t('Acciones') }}">{{ student_actions(st) }}</td>
               </tr>
               {% endfor %}
             </tbody>
           </table>
         </form>
-        {% else %}
+        <div class="student-card-list">
+          {% for st in section_students %}
+          {{ student_mobile_card(st) }}
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if archived_students %}
+        <section class="section-archive-panel section-student-archive-panel" aria-label="{{ t('Estudiantes archivados') }}">
+          <header class="section-archive-header">
+            <div>
+              <p class="eyebrow">{{ icon('archive') }}{{ t('Archivados') }}</p>
+              <h2>{{ t('Estudiantes archivados') }}</h2>
+              <p>{{ t('Restauralos cuando quieras volver a mostrarlos en la sección.') }}</p>
+            </div>
+          </header>
+          <div class="student-archive-list">
+            {% for st in archived_students %}
+            {{ archived_student_card(st) }}
+            {% endfor %}
+          </div>
+        </section>
+        {% endif %}
+
+        {% if not section_students and not archived_students %}
         <div class="empty-state bank-empty roster-empty-state">{{ icon('users-three-duotone') }}<h2>{{ t('No se encontraron estudiantes') }}</h2><p>{{ t('Añadí un estudiante a esta sección o revisá la configuración de la sección.') }}</p></div>
         {% endif %}
-      </section>
+        </section>
       {% endif %}
 
       {% if not sections %}

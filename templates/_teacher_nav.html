@@ -2,7 +2,7 @@
 <aside class="app-sidebar" data-teacher-sidebar aria-label="{{ t('Teacher dashboard') }}">
   <div class="sidebar-brand-row">
     <a class="sidebar-brand" href="{{ url_for('teacher') }}" aria-label="Assessment Studio">
-      <span class="sidebar-brand-mark" aria-hidden="true">AS</span>
+      <img class="sidebar-brand-logo" src="{{ url_for('static', filename='main_logo_assesment.png') }}" alt="" aria-hidden="true">
       <span class="sidebar-brand-copy"><strong>Assessment Studio</strong><small>{{ t('Teacher workspace') }}</small></span>
     </a>
     <button class="sidebar-collapse" type="button" data-sidebar-toggle aria-expanded="true" aria-controls="teacherSidebarSections" aria-label="{{ t('Collapse navigation') }}">
@@ -41,7 +41,7 @@
 </aside>
 
 <header class="mobile-app-bar">
-  <a class="mobile-brand" href="{{ url_for('teacher') }}"><span aria-hidden="true">AS</span><strong>Assessment Studio</strong></a>
+  <a class="mobile-brand" href="{{ url_for('teacher') }}"><img class="mobile-brand-logo" src="{{ url_for('static', filename='main_logo_assesment.png') }}" alt="" aria-hidden="true"><strong>Assessment Studio</strong></a>
   <span class="mobile-user">{{ current_teacher_user['full_name'] if current_teacher_user else session.get('teacher_name', 'Teacher') }}</span>
 </header>
 

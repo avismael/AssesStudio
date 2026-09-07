@@ -7,7 +7,7 @@
     {% set active_page = "results" %}{% include "_teacher_nav.html" %}
     <div class="teacher-workspace">
       <header class="teacher-header page-header">
-        <div><p class="eyebrow">{{ t('Teacher dashboard') }}</p><h1>{{ title }}</h1><p>{{ t('Monitor outcomes, review integrity signals, and move directly into assessment work.') }}</p></div>
+        <div class="teacher-panel-brand"><img class="brand-logo brand-logo-mini" src="{{ url_for('static', filename='main_logo_assesment.png') }}" alt="Assessment Studio"><div><p class="eyebrow">{{ t('Teacher dashboard') }}</p><h1>{{ title }}</h1><p>{{ t('Monitor outcomes, review integrity signals, and move directly into assessment work.') }}</p></div></div>
         <div class="teacher-actions"><a class="primary-btn compact" href="{{ url_for('teacher_exams') }}">{{ icon('file-text') }}{{ t('Manage exams') }}</a><a class="ghost-btn compact" href="{{ url_for('teacher_reports') }}">{{ icon('chart-bar') }}Informes</a><a class="ghost-btn compact" href="{{ url_for('teacher_questions') }}">{{ icon('question') }}{{ t('Question bank') }}</a></div>
       </header>
 

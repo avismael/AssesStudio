@@ -68,26 +68,50 @@ def render_teacher_students(credentials=None, bulk_credentials=None, import_summ
                FROM sections sec LEFT JOIN students st ON st.section_id=sec.id AND COALESCE(st.is_archived,0)=0
                WHERE sec.is_archived=0 GROUP BY sec.id ORDER BY sec.name"""
         ).fetchall()
+        archived_sections = conn.execute(
+            """SELECT sec.*, COUNT(st.id) AS student_count,
+                      SUM(CASE WHEN st.is_active=1 THEN 1 ELSE 0 END) AS active_count
+               FROM sections sec LEFT JOIN students st ON st.section_id=sec.id
+               WHERE sec.is_archived=1 GROUP BY sec.id ORDER BY sec.name"""
+        ).fetchall()
         students = conn.execute(
             f"""SELECT st.*, sec.name AS section_name
                 FROM students st JOIN sections sec ON sec.id=st.section_id
                 WHERE {' AND '.join(where)} ORDER BY sec.name, st.full_name""",
             params,
         ).fetchall()
+        archived_students = []
+        if selected_section_id:
+            archived_students = conn.execute(
+                """SELECT st.*, sec.name AS section_name
+                   FROM students st JOIN sections sec ON sec.id=st.section_id
+                   WHERE st.section_id=%s AND COALESCE(st.is_archived,0)=1
+                   ORDER BY st.full_name""",
+                (selected_section_id,),
+            ).fetchall()
         active_students = conn.execute("SELECT COUNT(*) AS n FROM students WHERE is_active=1 AND COALESCE(is_archived,0)=0").fetchone()["n"]
         inactive_students = conn.execute("SELECT COUNT(*) AS n FROM students WHERE is_active=0 AND COALESCE(is_archived,0)=0").fetchone()["n"]
     students_by_section = defaultdict(list)
     for student in students:
         students_by_section[int(student["section_id"])].append(student)
     selected_section = None
+    selected_section_is_archived = False
     if selected_section_id:
         selected_section = next((sec for sec in sections if int(sec["id"]) == selected_section_id), None)
+        if not selected_section:
+            selected_section = next((sec for sec in archived_sections if int(sec["id"]) == selected_section_id), None)
+            selected_section_is_archived = bool(selected_section)
+        elif int(selected_section["is_archived"] or 0):
+            selected_section_is_archived = True
     return render_template(
         "teacher/students/index.html", students=students, sections=sections,
         active_students=active_students, inactive_students=inactive_students,
         students_by_section=students_by_section,
+        archived_sections=archived_sections,
+        archived_students=archived_students,
         filters={"q": query, "section": str(selected_section_id or section_filter or "")},
         selected_section=selected_section,
+        selected_section_is_archived=selected_section_is_archived,
         selected_section_id=selected_section_id,
         credentials=credentials, bulk_credentials=bulk_credentials, import_summary=import_summary,
     )
@@ -268,6 +292,60 @@ def teacher_section_archive(section_id):
         conn.execute("UPDATE sections SET is_archived=1,updated_at=%s WHERE id=%s", (now_iso(), section_id))
         conn.commit()
     flash_ui("Sección archivada.", "success")
+    return redirect(url_for("teacher_students", **teacher_students_return_filters()))
+
+
+@app.post("/teacher/sections/<int:section_id>/restore")
+@admin_required
+def teacher_section_restore(section_id):
+    verify_csrf()
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM sections WHERE id=%s AND is_archived=1", (section_id,)).fetchone()
+        if not row:
+            abort(404)
+        try:
+            conn.execute("UPDATE sections SET is_archived=0,updated_at=%s WHERE id=%s", (now_iso(), section_id))
+            conn.commit()
+        except IntegrityError:
+            flash_ui("No pude restaurar la sección porque ya existe otra con ese nombre.", "error")
+            return redirect(url_for("teacher_students", **teacher_students_return_filters()))
+    flash_ui("Sección restaurada.", "success")
+    return redirect(url_for("teacher_students", **teacher_students_return_filters()))
+
+
+@app.post("/teacher/sections/<int:section_id>/delete")
+@admin_required
+def teacher_section_delete(section_id):
+    verify_csrf()
+    with get_db() as conn:
+        section = conn.execute("SELECT id,name FROM sections WHERE id=%s AND is_archived=1", (section_id,)).fetchone()
+        if not section:
+            abort(404)
+        student_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM students WHERE section_id=%s AND COALESCE(is_archived,0)=0",
+            (section_id,),
+        ).fetchone()["n"]
+        archived_student_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM students WHERE section_id=%s AND COALESCE(is_archived,0)=1",
+            (section_id,),
+        ).fetchone()["n"]
+        assignment_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM exam_assignments WHERE section_id=%s",
+            (section_id,),
+        ).fetchone()["n"]
+        if student_count or archived_student_count or assignment_count:
+            blockers = []
+            if student_count:
+                blockers.append(f"{student_count} estudiantes activos")
+            if archived_student_count:
+                blockers.append(f"{archived_student_count} estudiantes archivados")
+            if assignment_count:
+                blockers.append(f"{assignment_count} exámenes asociados")
+            flash_ui("No puedo eliminar la sección porque todavía tiene " + ", ".join(blockers) + ".", "error")
+            return redirect(url_for("teacher_students", **teacher_students_return_filters()))
+        conn.execute("DELETE FROM sections WHERE id=%s", (section_id,))
+        conn.commit()
+    flash_ui("Sección eliminada definitivamente.", "success")
     return redirect(url_for("teacher_students", **teacher_students_return_filters()))
 
 
@@ -505,4 +583,52 @@ def teacher_student_archive(student_id):
         )
         conn.commit()
     flash_ui("Estudiante archivado.", "success")
+    return redirect(url_for("teacher_students", **teacher_students_return_filters()))
+
+
+@app.post("/teacher/students/<int:student_id>/restore")
+@admin_required
+def teacher_student_restore(student_id):
+    verify_csrf()
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT st.id, st.section_id, sec.is_archived AS section_archived
+               FROM students st JOIN sections sec ON sec.id=st.section_id
+               WHERE st.id=%s AND COALESCE(st.is_archived,0)=1""",
+            (student_id,),
+        ).fetchone()
+        if not row:
+            abort(404)
+        if row["section_archived"]:
+            flash_ui("Primero restaurá la sección de ese estudiante.", "error")
+            return redirect(url_for("teacher_students", **teacher_students_return_filters()))
+        try:
+            conn.execute("UPDATE students SET is_archived=0,is_active=1,updated_at=%s WHERE id=%s", (now_iso(), student_id))
+            conn.commit()
+        except IntegrityError:
+            flash_ui("No pude restaurar el estudiante porque su correo o código ya está en uso.", "error")
+            return redirect(url_for("teacher_students", **teacher_students_return_filters()))
+    flash_ui("Estudiante restaurado.", "success")
+    return redirect(url_for("teacher_students", **teacher_students_return_filters()))
+
+
+@app.post("/teacher/students/<int:student_id>/delete")
+@admin_required
+def teacher_student_delete(student_id):
+    verify_csrf()
+    with get_db() as conn:
+        student = conn.execute("SELECT id,full_name FROM students WHERE id=%s AND COALESCE(is_archived,0)=1", (student_id,)).fetchone()
+        if not student:
+            abort(404)
+        attempt_count = conn.execute("SELECT COUNT(*) AS n FROM attempts WHERE student_id=%s", (student_id,)).fetchone()["n"]
+        allocation_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM student_exam_allocations WHERE student_id=%s",
+            (student_id,),
+        ).fetchone()["n"]
+        if attempt_count or allocation_count:
+            flash_ui("No puedo eliminar al estudiante porque tiene exámenes o asignaciones asociadas.", "error")
+            return redirect(url_for("teacher_students", **teacher_students_return_filters()))
+        conn.execute("DELETE FROM students WHERE id=%s", (student_id,))
+        conn.commit()
+    flash_ui("Estudiante eliminado definitivamente.", "success")
     return redirect(url_for("teacher_students", **teacher_students_return_filters()))

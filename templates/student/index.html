@@ -4,7 +4,7 @@
 {% block body %}
 <main class="student-home-shell student-protected-page">
   <header class="student-home-topbar page-header">
-    <div class="student-brand"><span class="brand-mark mini" aria-hidden="true">AS</span><div><p class="eyebrow">{{ institution }}</p><h1>{{ t('My assessments') }}</h1><p>{{ t('See what is ready, resume active work, and review submitted results.') }}</p></div></div>
+    <div class="student-brand"><img class="brand-logo brand-logo-mini" src="{{ url_for('static', filename='main_logo_assesment.png') }}" alt="Assessment Studio"><div><p class="eyebrow">{{ institution }}</p><h1>{{ t('My assessments') }}</h1><p>{{ t('See what is ready, resume active work, and review submitted results.') }}</p></div></div>
     <div class="student-account-actions"><a class="ghost-btn compact" href="{{ url_for('student_change_password') }}">{{ icon('key') }}{{ t('Change password') }}</a><form method="post" action="{{ url_for('student_logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="ghost-btn compact" type="submit">{{ icon('sign-out') }}{{ t('Sign out') }}</button></form></div>
   </header>
 
