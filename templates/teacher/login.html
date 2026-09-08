@@ -3,7 +3,7 @@
 {% block title %}{{ t('Teacher access heading') }}{% endblock %}
 {% block body %}
 <main class="login-shell"><section class="login-card teacher-login-card">
-  <img class="brand-logo" src="{{ url_for('static', filename='main_logo_assesment.png') }}" alt="Assessment Studio"><p class="eyebrow">{{ institution }}</p><h1>{{ t('Teacher access heading') }}</h1><p class="lead">{{ t('Open results, question banks, subjects, categories and assessment settings.') }}</p>
+  <img class="brand-logo" src="{{ url_for('static', filename='logo_login.png') }}" alt="Assessment Studio"><p class="eyebrow">{{ institution }}</p><h1>{{ t('Teacher access heading') }}</h1><p class="lead">{{ t('Open results, question banks, subjects, categories and assessment settings.') }}</p>
   <form method="post" class="login-form" autocomplete="on">
     <label><span>{{ t('Teacher email') }}</span><input type="email" name="email" autocomplete="username" required autofocus placeholder="docente@institucion.edu"></label>
     <label><span>{{ t('Password') }}</span><input type="password" name="password" autocomplete="current-password" required placeholder="••••••••"></label>
