@@ -7,7 +7,7 @@
   <form method="post" class="login-form" autocomplete="on">
     <label><span>{{ t('Teacher email') }}</span><input type="email" name="email" autocomplete="username" required autofocus placeholder="docente@institucion.edu"></label>
     <label><span>{{ t('Password') }}</span><input type="password" name="password" autocomplete="current-password" required placeholder="••••••••"></label>
-    <button class="primary-btn" type="submit">{{ t('Enter dashboard') }}{{ icon('arrow-right') }}</button>
+    <button class="primary-btn" type="submit"><span class="button-content"><span>{{ t('Enter dashboard') }}</span><span class="button-icon" aria-hidden="true">{{ icon('arrow-right') }}</span></span></button>
   </form>
   <a class="teacher-link icon-label" href="{{ url_for('index') }}">{{ icon('arrow-left') }}{{ t('Back to assessment') }}</a>
 </section></main>

@@ -10,7 +10,7 @@
       <p class="lead">{{ subtitle }}</p>
       <form action="{{ url_for('start') }}" method="post" class="login-form" autocomplete="on">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <label><span>{{ t('Email address') }}</span><input type="email" name="email" maxlength="254" required autocomplete="username" inputmode="email" placeholder="{{ t('student@example.com') }}"></label>
+        <label><span>{{ t('Email address') }}</span><input type="email" name="email" maxlength="254" required autocomplete="username" inputmode="email" placeholder="{{ t('correo@clases.edu.sv') }}"></label>
         <label><span>{{ t('Password') }}</span><input type="password" name="password" minlength="8" maxlength="128" required autocomplete="current-password" placeholder="••••••••"></label>
         <button class="primary-btn" type="submit">{{ icon('user-circle') }}{{ t('Sign in') }}</button>
       </form>
