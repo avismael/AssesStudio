@@ -24,7 +24,7 @@
       <section class="result-card report-card">
         <div class="result-heading report-heading">
           <div>
-            <p class="eyebrow">{{ icon('chart-bar') }}{{ institution }}</p>
+            <p class="eyebrow">{{ icon('report') }}{{ institution }}</p>
             <h1>{{ report_title }}</h1>
             <p>{{ report_subtitle }}</p>
           </div>
@@ -39,7 +39,7 @@
           <div><span>Evaluación</span><strong>{{ evaluation['title'] if evaluation else '—' }}</strong></div>
         </div>
         <section class="table-card report-table-card">
-          <div class="table-scroll">
+          <div class="table-scroll report-table-scroll">
             <table class="report-table">
               <thead>
                 <tr>
@@ -74,7 +74,7 @@
           <strong>Sección:</strong> {{ student['section_name'] }}
         </div>
         <section class="table-card report-table-card">
-          <div class="table-scroll">
+          <div class="table-scroll report-table-scroll">
             <table class="report-table">
               <thead>
                 <tr>
@@ -112,7 +112,7 @@
         </section>
         {% endif %}
 
-        <div class="result-actions">
+        <div class="result-actions report-actions">
           <button class="ghost-btn" type="button" onclick="window.print()">{{ icon('file-text') }}Imprimir</button>
           <a class="primary-btn" href="{{ back_url }}">{{ icon('arrow-left') }}Volver</a>
         </div>

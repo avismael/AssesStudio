@@ -15,7 +15,7 @@
       <p class="sidebar-label">{{ t('Operations') }}</p>
       <a class="sidebar-link {{ 'is-active' if active_page == 'results' else '' }}" href="{{ url_for('teacher') }}" {% if active_page == 'results' %}aria-current="page"{% endif %}><span class="sidebar-icon">{{ icon('chart-bar') }}</span><span><strong>{{ t('Results') }}</strong><small>{{ t('Submissions and integrity') }}</small></span></a>
       <a class="sidebar-link {{ 'is-active' if active_page == 'exams' else '' }}" href="{{ url_for('teacher_exams') }}" {% if active_page == 'exams' %}aria-current="page"{% endif %}><span class="sidebar-icon">{{ icon('file-text') }}</span><span><strong>{{ t('Exams') }}</strong><small>{{ t('Versions and assignments') }}</small></span></a>
-      <a class="sidebar-link {{ 'is-active' if active_page == 'reports' else '' }}" href="{{ url_for('teacher_reports') }}" {% if active_page == 'reports' %}aria-current="page"{% endif %}><span class="sidebar-icon">{{ icon('chart-bar') }}</span><span><strong>Informes</strong><small>Sección, asignatura y estudiante</small></span></a>
+      <a class="sidebar-link {{ 'is-active' if active_page == 'reports' else '' }}" href="{{ url_for('teacher_reports') }}" {% if active_page == 'reports' %}aria-current="page"{% endif %}><span class="sidebar-icon">{{ icon('report') }}</span><span><strong>Informes</strong><small>Sección, asignatura y estudiante</small></span></a>
     </nav>
     <nav class="sidebar-section" aria-label="{{ t('Content') }}">
       <p class="sidebar-label">{{ t('Content') }}</p>
@@ -46,11 +46,11 @@
 </header>
 
 <nav class="mobile-bottom-nav" aria-label="{{ t('Teacher dashboard') }}">
-  <a class="{{ 'is-active' if active_page == 'results' else '' }}" href="{{ url_for('teacher') }}" {% if active_page == 'results' %}aria-current="page"{% endif %}>{{ icon('chart-bar') }}<small>{{ t('Results') }}</small></a>
+   <a class="{{ 'is-active' if active_page == 'results' else '' }}" href="{{ url_for('teacher') }}" {% if active_page == 'results' %}aria-current="page"{% endif %}>{{ icon('chart-bar') }}<small>{{ t('Results') }}</small></a>
   <a class="{{ 'is-active' if active_page == 'exams' else '' }}" href="{{ url_for('teacher_exams') }}" {% if active_page == 'exams' %}aria-current="page"{% endif %}>{{ icon('file-text') }}<small>{{ t('Exams') }}</small></a>
    {% if current_teacher_user and current_teacher_user['role'] == 'admin' %}<a class="{{ 'is-active' if active_page == 'students' else '' }}" href="{{ url_for('teacher_students') }}" {% if active_page == 'students' %}aria-current="page"{% endif %}>{{ icon('users-three') }}<small>{{ t('Students') }}</small></a>{% endif %}
   <a class="{{ 'is-active' if active_page == 'questions' else '' }}" href="{{ url_for('teacher_questions') }}" {% if active_page == 'questions' %}aria-current="page"{% endif %}>{{ icon('question') }}<small>{{ t('Bank') }}</small></a>
-  <button class="{{ 'is-active' if active_page in ['catalog', 'setup', 'teachers', 'reports'] else '' }}" type="button" data-more-open aria-controls="teacherMoreSheet" aria-expanded="false" {% if active_page in ['catalog', 'setup', 'teachers', 'reports'] %}aria-current="page"{% endif %}>{{ icon('dots-three') }}<small>{{ t('More') }}</small></button>
+   <button class="{{ 'is-active' if active_page in ['catalog', 'setup', 'teachers', 'reports'] else '' }}" type="button" data-more-open aria-controls="teacherMoreSheet" aria-expanded="false" {% if active_page in ['catalog', 'setup', 'teachers', 'reports'] %}aria-current="page"{% endif %}>{{ icon('dots-three') }}<small>{{ t('More') }}</small></button>
 </nav>
 
 <div class="mobile-more-layer" data-more-layer hidden>
@@ -59,7 +59,7 @@
     <header><div><p class="eyebrow">{{ t('Workspace') }}</p><h2 id="teacherMoreTitle">{{ t('More') }}</h2></div><button class="sheet-close icon-only" type="button" data-more-close aria-label="{{ t('Close') }}">{{ icon('x') }}</button></header>
     <nav aria-label="{{ t('Secondary destinations') }}">
       <a href="{{ url_for('teacher_catalog') }}" {% if active_page == 'catalog' %}aria-current="page"{% endif %}><span>{{ icon('folders') }}</span><span><strong>{{ t('Catalog') }}</strong><small>{{ t('Subjects and categories') }}</small></span></a>
-      <a href="{{ url_for('teacher_reports') }}" {% if active_page == 'reports' %}aria-current="page"{% endif %}><span>{{ icon('chart-bar') }}</span><span><strong>Informes</strong><small>Sección, asignatura y estudiante</small></span></a>
+       <a href="{{ url_for('teacher_reports') }}" {% if active_page == 'reports' %}aria-current="page"{% endif %}><span>{{ icon('report') }}</span><span><strong>Informes</strong><small>Sección, asignatura y estudiante</small></span></a>
       {% if current_teacher_user and current_teacher_user['role'] == 'admin' %}<a href="{{ url_for('teacher_students') }}" {% if active_page == 'students' %}aria-current="page"{% endif %}><span>{{ icon('users-three') }}</span><span><strong>{{ t('Students') }}</strong><small>{{ t('Roster and sections') }}</small></span></a>{% endif %}
       {% if current_teacher_user and current_teacher_user['role'] == 'admin' %}<a href="{{ url_for('teacher_setup') }}" {% if active_page == 'setup' %}aria-current="page"{% endif %}><span>{{ icon('gear-six') }}</span><span><strong>{{ t('Setup') }}</strong><small>{{ t('Institution and exam policy') }}</small></span></a>{% endif %}
       {% if current_teacher_user and current_teacher_user['role'] == 'admin' %}<a href="{{ url_for('teacher_users') }}" {% if active_page == 'teachers' %}aria-current="page"{% endif %}><span>{{ icon('chalkboard-teacher') }}</span><span><strong>{{ t('Teachers') }}</strong><small>{{ t('Accounts and access') }}</small></span></a>{% endif %}

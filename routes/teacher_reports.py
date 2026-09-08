@@ -6,7 +6,7 @@ from app import (
     setting,
     teacher_required,
     teacher_reports_section_rows,
-    teacher_section_report_rows,
+    teacher_section_subject_rows,
     teacher_section_subject_report_rows,
     teacher_student_report_rows,
 )
@@ -55,7 +55,7 @@ def teacher_student_report(student_id):
 def teacher_section_report(section_id):
     with get_db() as conn:
         institution = setting(conn, "institution_name")
-        section, subjects, is_admin = teacher_section_report_rows(conn, section_id)
+        section, subjects, is_admin = teacher_section_subject_rows(conn, section_id)
         if not section:
             abort(404)
     return render_template(

@@ -285,6 +285,17 @@ td { border-color: var(--primitive-slate-100); }
 .report-meta strong { color: var(--ink); font-size: .95rem; line-height: 1.35; }
 .report-note { margin: 18px 0 6px; padding: 12px 14px; border-radius: 14px; background: #f7f9fc; border: 1px solid var(--line); color: var(--muted); font-size: .9rem; line-height: 1.5; }
 .report-table-card { margin-top: 18px; }
+.report-table-scroll { width: 100%; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
+.report-table-scroll .report-table { min-width: 42rem; width: max-content; }
+.report-table-scroll .report-table th,
+.report-table-scroll .report-table td { white-space: nowrap; }
+.report-table-scroll .report-table td[data-label="Nombre completo"],
+.report-table-scroll .report-table td[data-label="Examen"],
+.report-table-scroll .report-table td[data-label="Documento"] { white-space: normal; }
+.report-table-scroll .roster-row-actions { display: inline-flex; width: auto; }
+.report-table-scroll .ghost-btn.compact { width: auto; min-width: 0; }
+.result-actions.report-actions { display: flex; flex-wrap: wrap; gap: .65rem; align-items: center; }
+.result-actions.report-actions > * { flex: 0 0 auto; min-width: 0; }
 .report-table th { font-size: .76rem; text-transform: uppercase; letter-spacing: .06em; }
 .report-table td { vertical-align: top; }
 .report-table td strong { display: block; }
@@ -537,6 +548,7 @@ td { border-color: var(--primitive-slate-100); }
   .section-open-link { width: 100%; }
   .section-students-view-header { grid-template-columns: 1fr; }
   .section-students-view-stats { justify-content: stretch; }
+  .result-actions.report-actions { justify-content: flex-start; }
   .section-bulk-toolbar { grid-template-columns: 1fr 1fr; }
   .section-bulk-toolbar > .bulk-select-all { grid-column: 1 / -1; }
   .section-bulk-toolbar > .bulk-action-field,
@@ -546,6 +558,8 @@ td { border-color: var(--primitive-slate-100); }
   .section-bulk-toolbar > .bulk-selection-count { justify-self: start; }
   .section-students-view .roster-row-actions { gap: .3rem; }
   .section-students-view .roster-row-actions .roster-action { width: 2.5rem; min-width: 2.5rem; height: 2.5rem; min-height: 2.5rem; }
+  .result-actions.report-actions { flex-direction: row; align-items: flex-start; }
+  .result-actions.report-actions > * { flex: 0 0 auto; }
   .result-filter-grid { grid-template-columns: 1fr; }
   .result-filter-grid .filter-search-wide, .result-filter-grid .filter-actions { grid-column: auto; }
   .filter-actions { display: grid; grid-template-columns: 1fr 1fr; }
